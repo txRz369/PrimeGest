@@ -1,155 +1,206 @@
-// lib/main.dart
 import 'package:flutter/material.dart';
-import 'app_state.dart';
-import 'pages.dart';
+import 'models.dart';
+import 'repository.dart';
+import 'auth.dart';
+import 'ui/controlo_interno_page.dart';
+import 'ui/empresas_page.dart';
+import 'ui/contabilistas_page.dart';
+import 'ui/equipas_page.dart';
+import 'ui/tarefas_page.dart';
+import 'supabase_config.dart';
 
-void main() {
-  runApp(const MyApp());
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Supa.init(); // <— inicializa Supabase
+  runApp(const AppRoot());
 }
 
-class MyApp extends StatefulWidget {
-  const MyApp({super.key});
+/// AppState central com InheritedNotifier (sem pacotes externos)
+class AppScope extends InheritedNotifier<AppState> {
+  const AppScope({super.key, required AppState notifier, required Widget child})
+      : super(notifier: notifier, child: child);
 
+  static AppState of(BuildContext context) {
+    final scope = context.dependOnInheritedWidgetOfExactType<AppScope>();
+    assert(scope != null, 'AppScope not found in context');
+    return scope!.notifier!;
+  }
+}
+
+class AppState extends ChangeNotifier {
+  final Repository repo = Repository();
+  final AuthService auth = AuthService();
+  DateTime _selectedMonth = DateUtils.dateOnly(
+    DateTime(DateTime.now().year, DateTime.now().month, 1),
+  );
+
+  DateTime get selectedMonth => _selectedMonth;
+  void setMonth(DateTime m) {
+    _selectedMonth = DateUtils.dateOnly(DateTime(m.year, m.month, 1));
+    notifyListeners();
+  }
+
+  bool get isAdmin => auth.currentUser?.isAdmin == true;
+
+  List<Empresa> visibleEmpresas() {
+    final user = auth.currentUser;
+    if (user == null) return const [];
+    return repo.empresasForUser(user);
+  }
+
+  void logout() {
+    auth.logout();
+    notifyListeners();
+  }
+}
+
+class AppRoot extends StatefulWidget {
+  const AppRoot({super.key});
   @override
-  State<MyApp> createState() => _MyAppState();
+  State<AppRoot> createState() => _AppRootState();
 }
 
-class _MyAppState extends State<MyApp> {
-  final state = AppState();
+class _AppRootState extends State<AppRoot> {
+  late final AppState state;
 
   @override
   void initState() {
     super.initState();
-    state.seedIfEmpty();
+    state = AppState();
+    state.repo.seed(); // dados exemplo
   }
 
   @override
   Widget build(BuildContext context) {
-    return AppStateScope(
+    return AppScope(
       notifier: state,
       child: MaterialApp(
-        debugShowCheckedModeBanner: false,
         title: 'Controlo de Tarefas',
         theme: ThemeData(
+          colorSchemeSeed: Colors.indigo,
           useMaterial3: true,
-          colorSchemeSeed: Colors.teal,
           visualDensity: VisualDensity.adaptivePlatformDensity,
         ),
-        routes: {'/': (_) => const Shell(), '/login': (_) => const LoginPage()},
+        debugShowCheckedModeBanner: false,
         initialRoute: '/login',
+        routes: {
+          '/login': (_) => const LoginPage(),
+          '/controlo': (_) => const ControloInternoPage(),
+          '/empresas': (_) => const EmpresasPage(),
+          '/contabilistas': (_) => const ContabilistasPage(),
+          '/equipas': (_) => const EquipasPage(),
+          '/tarefas': (_) => const TarefasPage(),
+        },
+        onGenerateRoute: (settings) {
+          // fallback
+          return MaterialPageRoute(builder: (_) => const ControloInternoPage());
+        },
       ),
     );
   }
 }
 
-class Shell extends StatefulWidget {
-  const Shell({super.key});
+class LoginPage extends StatefulWidget {
+  const LoginPage({super.key});
   @override
-  State<Shell> createState() => _ShellState();
+  State<LoginPage> createState() => _LoginPageState();
 }
 
-class _ShellState extends State<Shell> {
-  int _index = 0;
+class _LoginPageState extends State<LoginPage> {
+  final userCtrl = TextEditingController();
+  final passCtrl = TextEditingController();
+  bool loading = false;
+  String? error;
+
+  void doLogin() async {
+    setState(() {
+      loading = true;
+      error = null;
+    });
+    final app = AppScope.of(context);
+    final ok = await app.auth.login(
+      app.repo,
+      userCtrl.text.trim(),
+      passCtrl.text,
+    );
+    setState(() => loading = false);
+    if (ok) {
+      if (!mounted) return;
+      Navigator.of(context).pushReplacementNamed('/controlo');
+    } else {
+      setState(() => error = 'Credenciais inválidas.');
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final state = AppStateScope.of(context);
-
-    // Se não estiver autenticado, volta ao login
-    if (!state.auth.isLoggedIn) {
-      Future.microtask(
-        () => Navigator.of(context).pushReplacementNamed('/login'),
-      );
-      return const SizedBox.shrink();
-    }
-
-    final isAdmin = state.auth.isAdmin;
-
-    // Páginas
-    final pagesAdmin = const [
-      InternalControlPage(),
-      CompaniesPage(),
-      AccountantsPage(),
-      TeamsPage(),
-      TasksPage(),
-    ];
-    final pagesCont = const [InternalControlPage()];
-    final pages = isAdmin ? pagesAdmin : pagesCont;
-
-    // Corrige índice fora de faixa
-    if (_index >= pages.length) _index = pages.length - 1;
-    if (_index < 0) _index = 0;
-
+    final color = Theme.of(context).colorScheme;
     return Scaffold(
-      appBar: AppBar(
-        title: Text(_titleForIndex(_index, isAdmin: isAdmin)),
-        actions: [
-          IconButton(
-            tooltip: 'Sair',
-            onPressed: () {
-              state.auth.logout();
-              Navigator.of(context).pushReplacementNamed('/login');
-            },
-            icon: const Icon(Icons.logout),
-          ),
-        ],
-      ),
-      drawer: Drawer(
-        child: SafeArea(
-          child: Column(
-            children: [
-              ListTile(
-                leading: const CircleAvatar(
-                  child: Icon(Icons.admin_panel_settings),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Card(
+            elevation: 0,
+            color: color.surfaceContainerHighest,
+            child: Padding(
+              padding: const EdgeInsets.all(24.0),
+              child: AutofillGroup(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.task_alt, size: 48),
+                    const SizedBox(height: 12),
+                    Text(
+                      'App Controlo de Tarefas',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 24),
+                    TextField(
+                      controller: userCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Utilizador',
+                      ),
+                      autofillHints: const [AutofillHints.username],
+                      onSubmitted: (_) => doLogin(),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: passCtrl,
+                      decoration: const InputDecoration(labelText: 'Senha'),
+                      obscureText: true,
+                      autofillHints: const [AutofillHints.password],
+                      onSubmitted: (_) => doLogin(),
+                    ),
+                    const SizedBox(height: 12),
+                    if (error != null)
+                      Text(error!, style: TextStyle(color: color.error)),
+                    const SizedBox(height: 12),
+                    FilledButton.icon(
+                      onPressed: loading ? null : doLogin,
+                      icon: loading
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.login),
+                      label: const Text('Entrar'),
+                    ),
+                    const SizedBox(height: 12),
+                    const Divider(),
+                    const SizedBox(height: 8),
+                    const Text('Admin: utilizador "admin", senha "admin"'),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Contabilistas de exemplo: "ines", "joao", "maria" (senha "1234")',
+                    ),
+                  ],
                 ),
-                title: Text(isAdmin ? 'Admin' : 'Contabilista'),
-                subtitle: Text(isAdmin ? 'Acesso total' : 'Acesso restrito'),
               ),
-              const Divider(),
-              Expanded(
-                child: ListView.builder(
-                  itemCount: _navItems(isAdmin: isAdmin).length,
-                  itemBuilder: (context, i) {
-                    final item = _navItems(isAdmin: isAdmin)[i];
-                    return ListTile(
-                      selected: _index == i,
-                      leading: Icon(item.icon),
-                      title: Text(item.label),
-                      onTap: () {
-                        setState(() => _index = i);
-                        Navigator.pop(context); // fecha o drawer
-                      },
-                    );
-                  },
-                ),
-              ),
-            ],
+            ),
           ),
         ),
       ),
-      body: pages[_index],
     );
   }
-
-  String _titleForIndex(int i, {required bool isAdmin}) {
-    final items = _navItems(isAdmin: isAdmin);
-    if (i < 0 || i >= items.length) return 'Controlo Interno';
-    return items[i].label;
-  }
-
-  List<_NavItem> _navItems({required bool isAdmin}) => isAdmin
-      ? const [
-          _NavItem('Controlo Interno', Icons.fact_check),
-          _NavItem('Empresas', Icons.apartment),
-          _NavItem('Contabilistas', Icons.people),
-          _NavItem('Equipas', Icons.groups),
-          _NavItem('Tarefas', Icons.task),
-        ]
-      : const [_NavItem('Controlo Interno', Icons.fact_check)];
-}
-
-class _NavItem {
-  final String label;
-  final IconData icon;
-  const _NavItem(this.label, this.icon);
 }

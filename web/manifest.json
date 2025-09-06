@@ -1,6 +1,6 @@
 {
-    "name": "nome_do_projeto",
-    "short_name": "nome_do_projeto",
+    "name": "PrimeGest",
+    "short_name": "PrimeGest",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
