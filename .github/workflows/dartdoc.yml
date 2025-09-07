@@ -1,0 +1,45 @@
+name: Publish dartdoc to GitHub Pages
+
+on:
+  push:
+    branches: [ main ]   # publica sempre que fizeres push para main
+  workflow_dispatch:      # permite correr manualmente no separador "Actions"
+
+permissions:
+  contents: write         # necessário para criar/atualizar o branch gh-pages
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'          # usa Flutter estável (traz o Dart junto)
+          # flutter-version: '3.x'   # (opcional) fixa uma versão específica
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build docs with dartdoc
+        run: dart doc -o docs
+
+      # Evita que o Jekyll esconda ficheiros gerados (pontos, underscores, etc.)
+      - name: Add .nojekyll
+        run: touch docs/.nojekyll
+
+      # (Opcional) Domínio personalizado: descomenta e troca pelo teu domínio
+      # - name: Add CNAME
+      #   run: echo "docs.seudominio.com" > docs/CNAME
+
+      - name: Deploy to gh-pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: ./docs
+          force_orphan: true         # mantém histórico do gh-pages “limpo”
