@@ -1,43 +1,100 @@
 import 'package:flutter/material.dart';
 
-enum Periodicidade { mensal, trimestral, isenta, cessada }
-
-enum Cargo { lider, senior, junior, estagiario }
-
+/// Filtros do painel
 enum ProfileFilter { todas, pendentes, concluidas }
 
-class DashboardCounts {
-  final int companies;
-  final int pending;
-  final int completed;
-  DashboardCounts(
-      {required this.companies,
-      required this.pending,
-      required this.completed});
+/// Periodicidade da empresa
+enum Periodicidade { mensal, trimestral, isenta, cessada }
+
+/// Cargos dos contabilistas
+enum Cargo { lider, senior, junior, estagiario }
+
+/// Estados possíveis para a Declaração de IVA
+enum IVAEstado {
+  aPagar,
+  planoPagar,
+  recuperar,
+  reembolso,
+  reportar,
+  naoTemIVA,
+  enviado,
+  cessada,
 }
 
-class Company {
-  String id;
+/// Modelo de Contabilista
+class Accountant {
+  final String id;
+  final String name;
+  final Cargo cargo;
+  final String email;
+
+  Accountant({
+    required this.id,
+    required this.name,
+    required this.cargo,
+    required this.email,
+  });
+
+  factory Accountant.fromMap(Map<String, dynamic> m) => Accountant(
+        id: m['id'] as String,
+        name: m['name'] as String,
+        cargo: Cargo.values.firstWhere((e) => e.name == (m['cargo'] as String)),
+        email: m['email'] as String,
+      );
+
+  Map<String, dynamic> toMapInsert() =>
+      {'name': name, 'cargo': cargo.name, 'email': email};
+}
+
+/// Modelo de Equipa
+class Team {
+  final String id;
   String name;
-  String nipc;
-  Periodicidade periodicidade;
-  int importance; // 0-5
-  String? logoUrl;
+  String? imageUrl;
+
+  Team({required this.id, required this.name, this.imageUrl});
+
+  factory Team.fromMap(Map<String, dynamic> m) => Team(
+      id: m['id'] as String,
+      name: m['name'] as String,
+      imageUrl: m['image_url'] as String?);
+
+  Map<String, dynamic> toMapUpdate() => {'name': name, 'image_url': imageUrl};
+}
+
+/// Modelo de Empresa
+class Company {
+  final String id;
+  final String name;
+  final String nipc;
+  final Periodicidade periodicidade;
+  final int importance;
+  final String? logoUrl;
+
+  // tarefas atribuídas
   List<String> taskKeys;
-  // Novo: responsável por tarefa (task_key -> accountant_id)
   Map<String, String?> taskResponsibleByKey;
 
   Company({
-    this.id = '',
+    required this.id,
     required this.name,
     required this.nipc,
     required this.periodicidade,
     required this.importance,
     this.logoUrl,
-    List<String>? taskKeys,
-    Map<String, String?>? taskResponsibleByKey,
-  })  : taskKeys = taskKeys ?? defaultTaskKeys(),
-        taskResponsibleByKey = taskResponsibleByKey ?? {};
+    this.taskKeys = const [],
+    this.taskResponsibleByKey = const {},
+  });
+
+  factory Company.fromMap(Map<String, dynamic> m) => Company(
+        id: m['id'] as String,
+        name: m['name'] as String,
+        nipc: m['nipc'] as String,
+        periodicidade: Periodicidade.values
+            .firstWhere((e) => e.name == (m['periodicidade'] as String)),
+        importance: (m['importance'] as num).toInt(),
+        logoUrl: m['logo_url'] as String?,
+      );
 
   Map<String, dynamic> toMapInsert() => {
         'name': name,
@@ -54,132 +111,20 @@ class Company {
         'importance': importance,
         'logo_url': logoUrl,
       };
-
-  factory Company.fromMap(Map<String, dynamic> m) => Company(
-        id: m['id'],
-        name: m['name'] ?? '',
-        nipc: m['nipc'] ?? '',
-        periodicidade:
-            Periodicidade.values.byName(m['periodicidade'] ?? 'mensal'),
-        importance: (m['importance'] ?? 0) as int,
-        logoUrl: m['logo_url'],
-      );
 }
 
-class Accountant {
-  final String id;
-  final String name;
-  final Cargo cargo;
-  final String email;
-
-  Accountant(
-      {required this.id,
-      required this.name,
-      required this.cargo,
-      required this.email});
-
-  Map<String, dynamic> toMapInsert({String? id}) => {
-        if (id != null) 'id': id,
-        'name': name,
-        'cargo': cargo.name,
-        'email': email,
-      };
-
-  factory Accountant.fromMap(Map<String, dynamic> m) => Accountant(
-        id: m['id'],
-        name: m['name'],
-        cargo: Cargo.values.byName(m['cargo']),
-        email: m['email'],
-      );
-}
-
-class Team {
-  final String id;
-  final String name;
-  Team({required this.id, required this.name});
-
-  factory Team.fromMap(Map<String, dynamic> m) =>
-      Team(id: m['id'], name: m['name']);
-}
-
-// ---- Task definitions ----
-class TaskDef {
-  final String key;
-  final String name;
-  final int defaultImportance; // 0-5
-  final bool isIVA;
-  const TaskDef(this.key, this.name,
-      {this.defaultImportance = 3, this.isIVA = false});
-}
-
-// “Fábrica”
-const List<TaskDef> kDefaultTasks = [
-  TaskDef('diversos', 'Diversos', defaultImportance: 2),
-  TaskDef('compras', 'Compras', defaultImportance: 3),
-  TaskDef('imobilizado', 'Imobilizado', defaultImportance: 2),
-  TaskDef('extratos_banc', 'Extratos Bancários', defaultImportance: 4),
-  TaskDef('extratos_cartao', 'Extratos de Cartões de Crédito',
-      defaultImportance: 3),
-  TaskDef('caixa', 'Caixa', defaultImportance: 2),
-  TaskDef('emprestimos', 'Empréstimos', defaultImportance: 3),
-  TaskDef('ine', 'INE', defaultImportance: 2),
-  TaskDef('vendas_saft', 'Vendas (Integração de SAFT-T)', defaultImportance: 5),
-  TaskDef('validar_saft', 'Validação de SAFT-T', defaultImportance: 5),
-  TaskDef('just_cli', 'Justificação de Clientes', defaultImportance: 4),
-  TaskDef('just_forn', 'Justificação de Fornecedores', defaultImportance: 4),
-  TaskDef('mapas_explor', 'Mapas de Exploração e Centro de Custo',
-      defaultImportance: 3),
-  TaskDef('decl_iva', 'Declaração IVA', defaultImportance: 5, isIVA: true),
-];
-
-List<String> defaultTaskKeys() => kDefaultTasks.map((e) => e.key).toList();
-TaskDef? defaultTaskByKey(String k) =>
-    kDefaultTasks.where((t) => t.key == k).cast<TaskDef?>().firstOrNull;
-
-// IVA status cores
-enum IVAEstado {
-  aPagar,
-  planoPagar,
-  recuperar,
-  reembolso,
-  reportar,
-  naoTemIVA,
-  enviado,
-  cessada,
-}
-
-Color colorForIVA(IVAEstado s, Brightness b) {
-  switch (s) {
-    case IVAEstado.aPagar:
-    case IVAEstado.planoPagar:
-      return Colors.red.shade400;
-    case IVAEstado.recuperar:
-      return Colors.green.shade800;
-    case IVAEstado.reembolso:
-      return Colors.green.shade300;
-    case IVAEstado.reportar:
-      return Colors.amber.shade600;
-    case IVAEstado.naoTemIVA:
-      return Colors.blue.shade600;
-    case IVAEstado.enviado:
-      return Colors.green.shade600;
-    case IVAEstado.cessada:
-      return Colors.lightBlue.shade200;
-  }
-}
-
+/// Instância mensal de tarefa
 class TaskInstance {
-  String companyId;
-  String taskKey;
-  int year;
-  int month;
+  final String companyId;
+  final String taskKey;
+  final int year;
+  final int month;
   bool done;
   String? responsibleId;
-  bool? recapitulativa;
+  IVAEstado? ivaEstado;
   DateTime? data;
   double? montante;
-  IVAEstado? ivaEstado;
-  String? note;
+  bool? recapitulativa;
 
   TaskInstance({
     required this.companyId,
@@ -188,12 +133,26 @@ class TaskInstance {
     required this.month,
     this.done = false,
     this.responsibleId,
-    this.recapitulativa,
+    this.ivaEstado,
     this.data,
     this.montante,
-    this.ivaEstado,
-    this.note,
+    this.recapitulativa,
   });
+
+  factory TaskInstance.fromMap(Map<String, dynamic> m) => TaskInstance(
+        companyId: m['company_id'] as String,
+        taskKey: m['task_key'] as String,
+        year: m['year'] as int,
+        month: m['month'] as int,
+        done: m['done'] as bool? ?? false,
+        responsibleId: m['responsible_id'] as String?,
+        ivaEstado: (m['iva_estado'] as String?) == null
+            ? null
+            : IVAEstado.values.firstWhere((e) => e.name == m['iva_estado']),
+        data: m['data'] == null ? null : DateTime.parse(m['data']),
+        montante: (m['montante'] as num?)?.toDouble(),
+        recapitulativa: m['recapitulativa'] as bool?,
+      );
 
   Map<String, dynamic> toMap() => {
         'company_id': companyId,
@@ -202,30 +161,84 @@ class TaskInstance {
         'month': month,
         'done': done,
         'responsible_id': responsibleId,
-        'recapitulativa': recapitulativa,
+        'iva_estado': ivaEstado?.name,
         'data': data?.toIso8601String(),
         'montante': montante,
-        'iva_estado': ivaEstado?.name,
-        'note': note,
+        'recapitulativa': recapitulativa,
       };
-
-  factory TaskInstance.fromMap(Map<String, dynamic> m) => TaskInstance(
-        companyId: m['company_id'],
-        taskKey: m['task_key'],
-        year: m['year'],
-        month: m['month'],
-        done: m['done'] ?? false,
-        responsibleId: m['responsible_id'],
-        recapitulativa: m['recapitulativa'],
-        data: m['data'] != null ? DateTime.parse(m['data']) : null,
-        montante: (m['montante'] as num?)?.toDouble(),
-        ivaEstado: m['iva_estado'] != null
-            ? IVAEstado.values.byName(m['iva_estado'])
-            : null,
-        note: m['note'],
-      );
 }
 
-extension<T> on Iterable<T> {
-  T? get firstOrNull => isEmpty ? null : first;
+/// Contadores para os cards do dashboard
+class DashboardCounts {
+  final int companies;
+  final int pending;
+  final int completed;
+  DashboardCounts(
+      {required this.companies,
+      required this.pending,
+      required this.completed});
+}
+
+/// Definição de tarefa “de fábrica”
+class TaskDef {
+  final String key;
+  final String name;
+  final int defaultImportance;
+  final bool isIVA;
+  const TaskDef(
+      {required this.key,
+      required this.name,
+      this.defaultImportance = 0,
+      this.isIVA = false});
+}
+
+const List<TaskDef> kDefaultTasks = [
+  TaskDef(key: 'diversos', name: 'Diversos', defaultImportance: 1),
+  TaskDef(key: 'compras', name: 'Compras', defaultImportance: 1),
+  TaskDef(key: 'imobilizado', name: 'Imobilizado', defaultImportance: 1),
+  TaskDef(
+      key: 'extratos_banc', name: 'Extratos Bancários', defaultImportance: 2),
+  TaskDef(key: 'extratos_cc', name: 'Extratos de Cartões de Crédito'),
+  TaskDef(key: 'caixa', name: 'Caixa'),
+  TaskDef(key: 'emprestimos', name: 'Empréstimos'),
+  TaskDef(key: 'ine', name: 'INE'),
+  TaskDef(
+      key: 'vendas_saft',
+      name: 'Vendas (Integração de SAFT-T)',
+      defaultImportance: 3),
+  TaskDef(key: 'valid_saft', name: 'Validação de SAFT-T'),
+  TaskDef(key: 'just_clientes', name: 'Justificação de Clientes'),
+  TaskDef(key: 'just_fornec', name: 'Justificação de Fornecedores'),
+  TaskDef(key: 'mapas_expl', name: 'Mapas de Exploração e Centro de Custo'),
+  TaskDef(
+      key: 'decl_iva',
+      name: 'Declaração IVA',
+      isIVA: true,
+      defaultImportance: 5),
+];
+
+TaskDef? defaultTaskByKey(String k) =>
+    kDefaultTasks.firstWhere((t) => t.key == k,
+        orElse: () => const TaskDef(key: 'x', name: 'Tarefa'));
+List<String> defaultTaskKeys() => kDefaultTasks.map((e) => e.key).toList();
+
+/// Cores por estado de IVA (para botões/etiquetas)
+Color colorForIVA(IVAEstado s, Brightness _) {
+  switch (s) {
+    case IVAEstado.aPagar:
+    case IVAEstado.planoPagar:
+      return Colors.red;
+    case IVAEstado.recuperar:
+      return const Color(0xFF1B5E20);
+    case IVAEstado.reembolso:
+      return Colors.lightGreen;
+    case IVAEstado.reportar:
+      return Colors.amber;
+    case IVAEstado.naoTemIVA:
+      return Colors.blue;
+    case IVAEstado.enviado:
+      return Colors.green;
+    case IVAEstado.cessada:
+      return Colors.lightBlueAccent;
+  }
 }

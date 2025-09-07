@@ -2,12 +2,11 @@ import 'dart:typed_data';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'models.dart';
 
-// ======= CREDENCIAIS =======
-const String SUPABASE_URL = 'https://qexeyjldiyhwftrclqzx.supabase.co';
+/// ======= CREDENCIAIS DO TEU PROJECTO =======
+const String SUPABASE_URL = 'https://qxjxtadslgwkqibszqcr.supabase.co';
 const String SUPABASE_ANON_KEY =
-    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFleGV5amxkaXlod2Z0cmNscXp4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcxODk2NTAsImV4cCI6MjA3Mjc2NTY1MH0.VOC73Y_mxg5xHjeklNLx1K4c9hiN7X9SYiLVCA65Nng';
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF4anh0YWRzbGd3a3FpYnN6cWNyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcyNjM5NTUsImV4cCI6MjA3MjgzOTk1NX0.HurCX5klQGuObyrUqnr6bapdUMnvfQHekg_rJE5NTwM';
 const String LOGO_BUCKET = 'logos';
-// ===========================
 
 class Supa {
   static late SupabaseClient client;
@@ -17,18 +16,35 @@ class Supa {
     client = Supabase.instance.client;
   }
 
+  // ---------- Auth ----------
   static bool get loggedIn => client.auth.currentSession != null;
   static String? get email => client.auth.currentUser?.email;
 
   static Future<AuthResponse> signIn(String email, String pass) =>
       client.auth.signInWithPassword(email: email, password: pass);
+
   static Future<void> signOut() => client.auth.signOut();
 
-  static void onAuthStateChange(Function(Session?) cb) {
+  /// Re-adicionado para o teu main.dart
+  static void onAuthStateChange(void Function(Session?) cb) {
     client.auth.onAuthStateChange.listen((data) => cb(data.session));
   }
 
-  // ---- Accounts / Roles ----
+  // ---------- Accountants ----------
+  static Future<List<Accountant>> fetchAccountants() async {
+    final res = await client.from('accountants').select().order('name');
+    return (res as List).map((m) => Accountant.fromMap(m)).toList();
+  }
+
+  static Future<String> createAccountant(Accountant a) async {
+    final inserted = await client
+        .from('accountants')
+        .insert(a.toMapInsert())
+        .select()
+        .single();
+    return inserted['id'] as String;
+  }
+
   static Future<Accountant?> fetchMyAccountant() async {
     final e = email;
     if (e == null) return null;
@@ -38,10 +54,26 @@ class Supa {
     return Accountant.fromMap(res);
   }
 
-  // ---- Teams ----
+  // ---------- Teams ----------
   static Future<List<Team>> fetchTeams() async {
     final res = await client.from('teams').select().order('name');
     return (res as List).map((m) => Team.fromMap(m)).toList();
+  }
+
+  static Future<void> ensureDefaultTeams() async {
+    final res = await client.from('teams').select('id').limit(1);
+    if ((res as List).isEmpty) {
+      await client.from('teams').insert([
+        {'name': 'Equipa A'},
+        {'name': 'Equipa B'},
+        {'name': 'Equipa C'},
+        {'name': 'Equipa D'},
+      ]);
+    }
+  }
+
+  static Future<void> updateTeam(Team t) async {
+    await client.from('teams').update(t.toMapUpdate()).eq('id', t.id);
   }
 
   static Future<void> upsertTeamMembers(
@@ -60,6 +92,22 @@ class Supa {
     await client.from('team_companies').insert([
       for (final id in companyIds) {'team_id': teamId, 'company_id': id}
     ]);
+  }
+
+  static Future<List<String>> teamMembersIds(String teamId) async {
+    final res = await client
+        .from('team_members')
+        .select('accountant_id')
+        .eq('team_id', teamId);
+    return (res as List).map((e) => e['accountant_id'] as String).toList();
+  }
+
+  static Future<List<String>> teamCompanyIds(String teamId) async {
+    final res = await client
+        .from('team_companies')
+        .select('company_id')
+        .eq('team_id', teamId);
+    return (res as List).map((e) => e['company_id'] as String).toList();
   }
 
   static Future<List<String>> teamCompanyIdsForMe() async {
@@ -83,7 +131,7 @@ class Supa {
     return ids.toList();
   }
 
-  // ---- Companies ----
+  // ---------- Companies ----------
   static Future<List<Company>> fetchCompanies(
       {String? search, List<String>? inIds}) async {
     final res = await client
@@ -100,7 +148,6 @@ class Supa {
       list = list.where((c) => c.name.toLowerCase().contains(s)).toList();
     }
 
-    // Carregar tarefas atribuídas + responsável
     for (final c in list) {
       final t = await client
           .from('company_tasks')
@@ -134,7 +181,6 @@ class Supa {
           }
       ]);
     }
-
     if (teamId != null) {
       await client
           .from('team_companies')
@@ -156,7 +202,6 @@ class Supa {
           }
       ]);
     }
-    // atualizar equipa (se fornecida)
     if (teamId != null) {
       await client.from('team_companies').delete().eq('company_id', c.id);
       await client
@@ -165,7 +210,7 @@ class Supa {
     }
   }
 
-  // ---- Upload de logo (por bytes) ----
+  // ---------- Storage (logos / imagens de equipa) ----------
   static Future<String> uploadLogo(Uint8List bytes, String filename) async {
     final path = '${DateTime.now().millisecondsSinceEpoch}_$filename';
     await client.storage.from(LOGO_BUCKET).uploadBinary(
@@ -176,36 +221,16 @@ class Supa {
     return client.storage.from(LOGO_BUCKET).getPublicUrl(path);
   }
 
-  // ---- Accountants ----
-  static Future<List<Accountant>> fetchAccountants() async {
-    final res = await client.from('accountants').select().order('name');
-    return (res as List).map((m) => Accountant.fromMap(m)).toList();
-  }
-
-  static Future<String> createAccountant(Accountant a, String _ignored) async {
-    final inserted = await client
-        .from('accountants')
-        .insert(a.toMapInsert())
-        .select()
-        .single();
-    return inserted['id'] as String;
-  }
-
-  // ---- Task monthly instances (BATCH) ----
+  // ---------- Task instances (batch) ----------
   static Future<Map<String, List<TaskInstance>>>
       fetchInstancesForCompaniesMonth(
-    List<String> companyIds,
-    int year,
-    int month,
-  ) async {
+          List<String> companyIds, int year, int month) async {
     if (companyIds.isEmpty) return {};
 
     final assigned = await client
         .from('company_tasks')
         .select('company_id,task_key,responsible_id')
         .inFilter('company_id', companyIds);
-
-    final assignedList = (assigned as List);
 
     final existing = await client
         .from('task_instances')
@@ -220,7 +245,7 @@ class Supa {
     }
 
     final toUpsert = <Map<String, dynamic>>[];
-    for (final a in assignedList) {
+    for (final a in (assigned as List)) {
       final key = '${a['company_id']}|${a['task_key']}';
       if (!existingSet.contains(key)) {
         toUpsert.add({
@@ -234,10 +259,9 @@ class Supa {
       }
     }
     if (toUpsert.isNotEmpty) {
-      await client.from('task_instances').upsert(
-            toUpsert,
-            onConflict: 'company_id,task_key,year,month',
-          );
+      await client
+          .from('task_instances')
+          .upsert(toUpsert, onConflict: 'company_id,task_key,year,month');
     }
 
     final rows = await client
@@ -265,16 +289,17 @@ class Supa {
   }
 
   static Future<void> upsertInstance(TaskInstance i) async {
-    await client
-        .from('task_instances')
-        .upsert(i.toMap(), onConflict: 'company_id,task_key,year,month');
+    await client.from('task_instances').upsert(
+          i.toMap(),
+          onConflict: 'company_id,task_key,year,month',
+        );
   }
 
-  // (opcional) counts directos
-  static Future<DashboardCounts> counts(
-      {required int year,
-      required int month,
-      List<String>? inCompanyIds}) async {
+  static Future<DashboardCounts> counts({
+    required int year,
+    required int month,
+    List<String>? inCompanyIds,
+  }) async {
     final res = await client
         .from('task_instances')
         .select('done, company_id')

@@ -22,19 +22,19 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _newAccountant() async {
-    final a = await showDialog<Accountant>(
+  Future<void> _newAcc() async {
+    final res = await showDialog<_AccResult>(
       context: context,
-      builder: (_) => const _AccountantDialog(),
+      builder: (_) => const _AccDialog(),
     );
-    if (a == null) return;
-    // cria registo na tabela accountants (não cria utilizador Auth)
-    await Supa.createAccountant(a, '');
-    await _load();
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Contabilista criado.')),
-      );
+    if (res != null) {
+      await Supa.createAccountant(Accountant(
+        id: '',
+        name: res.name,
+        cargo: res.cargo,
+        email: res.email,
+      ));
+      await _load();
     }
   }
 
@@ -50,7 +50,7 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
                   style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
               const Spacer(),
               FilledButton.icon(
-                onPressed: _newAccountant,
+                onPressed: _newAcc,
                 icon: const Icon(Icons.add),
                 label: const Text('Novo'),
               ),
@@ -68,12 +68,9 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
                       return Card(
                         elevation: 0,
                         surfaceTintColor: Colors.transparent,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                          side: BorderSide.none,
-                        ),
                         child: ListTile(
-                          leading: const Icon(Icons.badge),
+                          leading: CircleAvatar(
+                              child: Text(a.name.isEmpty ? 'C' : a.name[0])),
                           title: Text(a.name),
                           subtitle: Text(
                               '${a.cargo.name.toUpperCase()} • ${a.email}'),
@@ -88,51 +85,50 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
   }
 }
 
-class _AccountantDialog extends StatefulWidget {
-  const _AccountantDialog();
-
-  @override
-  State<_AccountantDialog> createState() => _AccountantDialogState();
+class _AccResult {
+  final String name;
+  final String email;
+  final Cargo cargo;
+  _AccResult(this.name, this.email, this.cargo);
 }
 
-class _AccountantDialogState extends State<_AccountantDialog> {
-  final name = TextEditingController();
-  final email = TextEditingController();
-  final pass = TextEditingController();
-  Cargo cargo = Cargo.junior;
+class _AccDialog extends StatefulWidget {
+  const _AccDialog();
+
+  @override
+  State<_AccDialog> createState() => _AccDialogState();
+}
+
+class _AccDialogState extends State<_AccDialog> {
+  final _name = TextEditingController();
+  final _email = TextEditingController();
+  Cargo _cargo = Cargo.junior;
 
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
       title: const Text('Novo Contabilista'),
       content: SizedBox(
-        width: 420,
+        width: 520,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             TextField(
-                controller: name,
+                controller: _name,
                 decoration: const InputDecoration(labelText: 'Nome')),
             const SizedBox(height: 8),
+            TextField(
+                controller: _email,
+                decoration: const InputDecoration(labelText: 'Email')),
+            const SizedBox(height: 8),
             DropdownButtonFormField<Cargo>(
-              value: cargo,
+              value: _cargo,
               items: Cargo.values
                   .map((c) => DropdownMenuItem(
                       value: c, child: Text(c.name.toUpperCase())))
                   .toList(),
-              onChanged: (v) => setState(() => cargo = v ?? Cargo.junior),
+              onChanged: (v) => setState(() => _cargo = v ?? Cargo.junior),
               decoration: const InputDecoration(labelText: 'Cargo'),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-                controller: email,
-                decoration: const InputDecoration(labelText: 'Email')),
-            const SizedBox(height: 8),
-            TextField(
-              controller: pass,
-              decoration: const InputDecoration(
-                  labelText: 'Senha (guardada apenas para referência)'),
-              obscureText: true,
             ),
           ],
         ),
@@ -142,14 +138,8 @@ class _AccountantDialogState extends State<_AccountantDialog> {
             onPressed: () => Navigator.pop(context),
             child: const Text('Cancelar')),
         FilledButton(
-          onPressed: () {
-            final a = Accountant(
-                id: 'tmp',
-                name: name.text.trim(),
-                cargo: cargo,
-                email: email.text.trim());
-            Navigator.pop(context, a);
-          },
+          onPressed: () => Navigator.pop(context,
+              _AccResult(_name.text.trim(), _email.text.trim(), _cargo)),
           child: const Text('Guardar'),
         ),
       ],
