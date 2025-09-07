@@ -1,11 +1,13 @@
 import 'dart:typed_data';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:postgrest/postgrest.dart';
 import 'models.dart';
 
 /// ======= CREDENCIAIS DO TEU PROJECTO =======
 const String SUPABASE_URL = 'https://qxjxtadslgwkqibszqcr.supabase.co';
 const String SUPABASE_ANON_KEY =
     'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF4anh0YWRzbGd3a3FpYnN6cWNyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcyNjM5NTUsImV4cCI6MjA3MjgzOTk1NX0.HurCX5klQGuObyrUqnr6bapdUMnvfQHekg_rJE5NTwM';
+
 const String LOGO_BUCKET = 'logos';
 
 class Supa {
@@ -44,6 +46,7 @@ class Supa {
     return inserted['id'] as String;
   }
 
+  /// editar contabilista (usado no ecrã Contabilistas)
   static Future<void> updateAccountant(Accountant a) async {
     await client
         .from('accountants')
@@ -52,12 +55,27 @@ class Supa {
   }
 
   static Future<Accountant?> fetchMyAccountant() async {
-    final e = email;
-    if (e == null) return null;
-    final res =
-        await client.from('accountants').select().eq('email', e).maybeSingle();
-    if (res == null) return null;
-    return Accountant.fromMap(res);
+    final eRaw = email;
+    final e = eRaw?.trim();
+    if (e == null || e.isEmpty) return null;
+
+    // tentativa 1: case-insensitive
+    final byIlike = await client
+        .from('accountants')
+        .select()
+        .ilike('email', e)
+        .maybeSingle();
+    if (byIlike != null) return Accountant.fromMap(byIlike);
+
+    // tentativa 2: varre tudo e compara em lower()
+    final all = await client.from('accountants').select();
+    for (final m in (all as List)) {
+      final em = (m['email'] as String?)?.trim();
+      if (em != null && em.toLowerCase() == e.toLowerCase()) {
+        return Accountant.fromMap(m);
+      }
+    }
+    return null;
   }
 
   // ---------- Teams ----------
@@ -78,8 +96,19 @@ class Supa {
     }
   }
 
+  /// se a coluna image_url não existir, faz fallback para atualizar só o nome
   static Future<void> updateTeam(Team t) async {
-    await client.from('teams').update(t.toMapUpdate()).eq('id', t.id);
+    try {
+      final payload = <String, dynamic>{'name': t.name};
+      if ((t.imageUrl ?? '').isNotEmpty) payload['image_url'] = t.imageUrl;
+      await client.from('teams').update(payload).eq('id', t.id);
+    } on PostgrestException catch (e) {
+      if (e.code == 'PGRST204') {
+        await client.from('teams').update({'name': t.name}).eq('id', t.id);
+      } else {
+        rethrow;
+      }
+    }
   }
 
   static Future<void> upsertTeamMembers(
@@ -119,21 +148,22 @@ class Supa {
   static Future<List<String>> teamCompanyIdsForMe() async {
     final acc = await fetchMyAccountant();
     if (acc == null) return [];
+
     final rows = await client
         .from('team_members')
         .select('team_id')
         .eq('accountant_id', acc.id);
-    final teamIds = (rows as List).map((m) => m['team_id'] as String).toList();
 
+    final teamIds =
+        (rows as List).map((m) => m['team_id'] as String).toSet().toList();
     if (teamIds.isEmpty) return [];
-    final ids = <String>{};
-    for (final t in teamIds) {
-      final tc = await client
-          .from('team_companies')
-          .select('company_id')
-          .eq('team_id', t);
-      ids.addAll((tc as List).map((m) => m['company_id'] as String));
-    }
+
+    final tc = await client
+        .from('team_companies')
+        .select('company_id')
+        .inFilter('team_id', teamIds);
+
+    final ids = (tc as List).map((m) => m['company_id'] as String).toSet();
     return ids.toList();
   }
 
@@ -216,7 +246,7 @@ class Supa {
     }
   }
 
-  // ---------- Storage (logos / imagens de equipa) ----------
+  // ---------- Storage ----------
   static Future<String> uploadLogo(Uint8List bytes, String filename) async {
     final path = '${DateTime.now().millisecondsSinceEpoch}_$filename';
     await client.storage.from(LOGO_BUCKET).uploadBinary(
@@ -227,7 +257,7 @@ class Supa {
     return client.storage.from(LOGO_BUCKET).getPublicUrl(path);
   }
 
-  // ---------- Task instances (batch) ----------
+  // ---------- Task instances ----------
   static Future<Map<String, List<TaskInstance>>>
       fetchInstancesForCompaniesMonth(
           List<String> companyIds, int year, int month) async {
@@ -294,9 +324,31 @@ class Supa {
     return map;
   }
 
+  /// upsert "normal"
   static Future<void> upsertInstance(TaskInstance i) async {
     await client.from('task_instances').upsert(
           i.toMap(),
+          onConflict: 'company_id,task_key,year,month',
+        );
+  }
+
+  /// ✅ Fallback simples para projetos sem colunas novas — usa apenas os campos
+  /// garantidos no teu models.dart atual (data/montante/recapitulativa).
+  static Future<void> upsertInstanceLegacy(TaskInstance i) async {
+    final Map<String, dynamic> legacy = {
+      'company_id': i.companyId,
+      'task_key': i.taskKey,
+      'year': i.year,
+      'month': i.month,
+      'done': i.done,
+      'responsible_id': i.responsibleId,
+      'iva_estado': i.ivaEstado?.name,
+      'data': i.data?.toIso8601String(),
+      'montante': i.montante,
+      'recapitulativa': i.recapitulativa,
+    };
+    await client.from('task_instances').upsert(
+          legacy,
           onConflict: 'company_id,task_key,year,month',
         );
   }

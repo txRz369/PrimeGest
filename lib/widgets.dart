@@ -45,7 +45,7 @@ class InfoBox extends StatelessWidget {
   }
 }
 
-/// -------------------- Novo YearMonthPicker --------------------
+/// -------------------- YearMonthPicker --------------------
 class YearMonthPickerButton extends StatelessWidget {
   final DateTime initial;
   final ValueChanged<DateTime> onChanged;
@@ -152,7 +152,6 @@ class CompanyCard extends StatefulWidget {
   final int year;
   final int month;
   final void Function(TaskInstance) onToggleTask;
-  // mantemos a assinatura, mas o controlo IVA grava direto via Supa
   final void Function(TaskInstance,
       {IVAEstado? estado, DateTime? data, double? montante}) onIVAChange;
   final Brightness brightness;
@@ -198,6 +197,7 @@ class _CompanyCardState extends State<CompanyCard> {
   }
 
   String _resolvedResponsible(TaskInstance ti) {
+    // mostra logo o responsável definido na empresa se a instância não tiver
     return _accName(
         ti.responsibleId ?? widget.company.taskResponsibleByKey[ti.taskKey]);
   }
@@ -289,7 +289,6 @@ class _TaskRow extends StatelessWidget {
           if (isIVA)
             _IVAControls(
               ti: ti,
-              onChange: onIVAChange,
               onToggleDone: onToggle,
               brightness: brightness,
             ),
@@ -299,18 +298,13 @@ class _TaskRow extends StatelessWidget {
   }
 }
 
-/// =================== IVA (campos independentes) ===================
+/// =================== IVA (com gravação à prova de falhas) ===================
 class _IVAControls extends StatefulWidget {
   final TaskInstance ti;
-  final void Function(IVAEstado? estado, DateTime? data, double? montante)
-      onChange; // mantido para não quebrar assinaturas externas
   final VoidCallback onToggleDone;
   final Brightness brightness;
   const _IVAControls(
-      {required this.ti,
-      required this.onChange,
-      required this.onToggleDone,
-      required this.brightness});
+      {required this.ti, required this.onToggleDone, required this.brightness});
 
   @override
   State<_IVAControls> createState() => _IVAControlsState();
@@ -377,10 +371,9 @@ class _IVAControlsState extends State<_IVAControls> {
       context: context,
       builder: (_) => _IVADialog(
         initialEstado: ti.ivaEstado,
-        initialPeriodicDate: ti.periodicDate,
-        initialPeriodicAmount: ti.periodicMontante,
-        initialRecapYes: ti.recapitulativa ??
-            (ti.recapDate != null || ti.recapMontante != null),
+        initialPeriodicDate: ti.periodicDate ?? ti.data,
+        initialPeriodicAmount: ti.periodicMontante ?? ti.montante,
+        initialRecapYes: ti.recapitulativa ?? false,
         initialRecapDate: ti.recapDate,
         initialRecapAmount: ti.recapMontante,
       ),
@@ -391,22 +384,31 @@ class _IVAControlsState extends State<_IVAControls> {
     // Atualiza o modelo em memória
     setState(() {
       ti.ivaEstado = result.estado ?? ti.ivaEstado;
+
       ti.periodicDate = result.periodicDate;
       ti.periodicMontante = result.periodicAmount;
+
       ti.recapitulativa = result.recapYes;
       ti.recapDate = result.recapYes ? result.recapDate : null;
       ti.recapMontante = result.recapYes ? result.recapAmount : null;
 
-      // também manter os campos legados em linha com Periódica (compat)
+      // compat legada (mostra sempre mesmo que BD seja antiga)
       ti.data = ti.periodicDate;
       ti.montante = ti.periodicMontante;
     });
 
-    // Persiste diretamente (inclui todos os campos novos)
-    await Supa.upsertInstance(ti);
+    // Persiste (com fallback automático)
+    try {
+      await Supa.upsertInstance(ti); // tenta com colunas novas
+    } catch (_) {
+      await Supa.upsertInstanceLegacy(ti); // garante gravação
+    }
 
-    // Notifica pai (apenas com estado para não quebrar chamadas antigas)
-    widget.onChange(ti.ivaEstado, null, null);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Declaração IVA guardada.')),
+      );
+    }
   }
 
   bool get _hasAnyConfig =>

@@ -5,10 +5,6 @@ import 'widgets.dart';
 import 'permissions.dart';
 
 /// Ecrã de Controlo de Tarefas
-/// - Carrega tudo de UMA vez (batch) para o mês/ano escolhido
-/// - Sem barra de “loading” contínua
-/// - Filtros (todas/pendentes/concluídas)
-/// - Seletor de Ano/Mês via popup (YearMonthPickerButton)
 class TaskControlScreen extends StatefulWidget {
   const TaskControlScreen({super.key});
   @override
@@ -16,18 +12,12 @@ class TaskControlScreen extends StatefulWidget {
 }
 
 class _TaskControlScreenState extends State<TaskControlScreen> {
-  // Ano/Mês actual
   DateTime ym = DateTime(DateTime.now().year, DateTime.now().month);
-  // Filtro (todas/pendentes/concluídas)
   ProfileFilter filter = ProfileFilter.todas;
-  // Pesquisa por nome de empresa
   String search = '';
 
-  // Dados em memória
   List<Company> companies = [];
-  Map<String, List<TaskInstance>> instances = {}; // companyId -> tarefas do mês
-
-  // Contadores para os cards informativos
+  Map<String, List<TaskInstance>> instances = {};
   DashboardCounts counts =
       DashboardCounts(companies: 0, pending: 0, completed: 0);
 
@@ -37,19 +27,16 @@ class _TaskControlScreenState extends State<TaskControlScreen> {
     _loadAll();
   }
 
-  // Carrega empresas + instâncias do mês de forma agregada (uma ida ao servidor)
   Future<void> _loadAll() async {
     final isAdmin = Permissions.isAdmin(Supa.email);
     final allowedCompanyIds =
         isAdmin ? <String>[] : await Supa.teamCompanyIdsForMe();
 
-    // 1) Empresas
     companies = await Supa.fetchCompanies(
       search: search.isEmpty ? null : search,
       inIds: isAdmin ? null : allowedCompanyIds,
     );
 
-    // 2) Instâncias do mês (batch)
     final ids = companies.map((c) => c.id).toList();
     instances = await Supa.fetchInstancesForCompaniesMonth(
       ids,
@@ -57,7 +44,19 @@ class _TaskControlScreenState extends State<TaskControlScreen> {
       ym.month,
     );
 
-    // 3) Regras especiais: empresa CESSADA -> Decl. IVA validada + estado CESSADA
+    // Sincroniza responsável das instâncias com o definido na Empresa (mostra já)
+    for (final c in companies) {
+      final list = instances[c.id] ?? [];
+      for (final ti in list) {
+        final compResp = c.taskResponsibleByKey[ti.taskKey];
+        if (compResp != null && compResp != ti.responsibleId) {
+          ti.responsibleId = compResp;
+          await Supa.upsertInstance(ti);
+        }
+      }
+    }
+
+    // Empresas cessadas: IVA automaticamente CESSADA & done
     for (final c
         in companies.where((c) => c.periodicidade == Periodicidade.cessada)) {
       final list = instances[c.id] ?? [];
@@ -99,7 +98,6 @@ class _TaskControlScreenState extends State<TaskControlScreen> {
   Widget build(BuildContext context) {
     final brightness = Theme.of(context).brightness;
 
-    // Aplica filtro de perfil
     final filteredCompanies = companies.where((c) {
       if (filter == ProfileFilter.todas) return true;
       final list = instances[c.id] ?? [];
@@ -114,7 +112,6 @@ class _TaskControlScreenState extends State<TaskControlScreen> {
       padding: const EdgeInsets.all(12),
       child: Column(
         children: [
-          // Linha superior: pesquisa + seletor Ano/Mês
           Row(
             children: [
               Expanded(
@@ -135,8 +132,6 @@ class _TaskControlScreenState extends State<TaskControlScreen> {
             ],
           ),
           const SizedBox(height: 12),
-
-          // Filtros de estado
           Row(
             children: [
               FilterChip(
@@ -161,8 +156,6 @@ class _TaskControlScreenState extends State<TaskControlScreen> {
             ],
           ),
           const SizedBox(height: 12),
-
-          // Caixas informativas (contadores locais)
           Row(
             children: [
               Expanded(
@@ -191,8 +184,6 @@ class _TaskControlScreenState extends State<TaskControlScreen> {
             ],
           ),
           const SizedBox(height: 12),
-
-          // Lista de empresas (sem barras de loading)
           Expanded(
             child: filteredCompanies.isEmpty
                 ? const Center(child: Text('Sem empresas.'))
@@ -206,7 +197,6 @@ class _TaskControlScreenState extends State<TaskControlScreen> {
                         monthInstances: list,
                         year: ym.year,
                         month: ym.month,
-                        // marca/desmarca imediatamente no UI e sincroniza
                         onToggleTask: (ti) async {
                           setState(() {
                             ti.done = !ti.done;
@@ -219,8 +209,9 @@ class _TaskControlScreenState extends State<TaskControlScreen> {
                             DateTime? data,
                             double? montante}) async {
                           if (estado != null) ti.ivaEstado = estado;
-                          if (data != null) ti.data = data;
-                          if (montante != null) ti.montante = montante;
+                          if (data != null) ti.data = data; // Periódica
+                          if (montante != null)
+                            ti.montante = montante; // Periódica
                           setState(() {}); // reflecte já
                           await Supa.upsertInstance(ti);
                         },

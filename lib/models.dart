@@ -123,18 +123,16 @@ class TaskInstance {
   String? responsibleId;
   IVAEstado? ivaEstado;
 
-  /// ⚠️ NOVO — valores independentes:
+  /// Periódica
   DateTime? periodicDate;
   double? periodicMontante;
 
+  /// Recapitulativa (campos novos – opcionais)
   DateTime? recapDate;
   double? recapMontante;
-
-  /// Mantido para compat: indicador de que houve Recapitulativa
   bool? recapitulativa;
 
-  /// (LEGADO) estes campos eram usados para 1 só par de data/montante
-  /// Mantidos apenas por compatibilidade eventual.
+  /// Legacy (existem em todas as BDs atuais)
   DateTime? data;
   double? montante;
 
@@ -161,27 +159,34 @@ class TaskInstance {
     return DateTime.tryParse(v.toString());
   }
 
-  factory TaskInstance.fromMap(Map<String, dynamic> m) => TaskInstance(
-        companyId: m['company_id'] as String,
-        taskKey: m['task_key'] as String,
-        year: m['year'] as int,
-        month: m['month'] as int,
-        done: m['done'] as bool? ?? false,
-        responsibleId: m['responsible_id'] as String?,
-        ivaEstado: (m['iva_estado'] as String?) == null
-            ? null
-            : IVAEstado.values.firstWhere((e) => e.name == m['iva_estado']),
-        // novos campos
-        periodicDate: _parseDate(m['periodic_data']),
-        periodicMontante: (m['periodic_montante'] as num?)?.toDouble(),
-        recapDate: _parseDate(m['recap_data']),
-        recapMontante: (m['recap_montante'] as num?)?.toDouble(),
-        recapitulativa: m['recapitulativa'] as bool?,
-        // legado — se existirem ainda na DB
-        data: _parseDate(m['data']),
-        montante: (m['montante'] as num?)?.toDouble(),
-      );
+  factory TaskInstance.fromMap(Map<String, dynamic> m) {
+    // Periódica: tenta ler dos novos; se não existirem, usa legacy
+    final perDate = _parseDate(m['periodic_data'] ?? m['data']);
+    final perMont =
+        ((m['periodic_montante'] as num?) ?? (m['montante'] as num?))
+            ?.toDouble();
 
+    return TaskInstance(
+      companyId: m['company_id'] as String,
+      taskKey: m['task_key'] as String,
+      year: m['year'] as int,
+      month: m['month'] as int,
+      done: m['done'] as bool? ?? false,
+      responsibleId: m['responsible_id'] as String?,
+      ivaEstado: (m['iva_estado'] as String?) == null
+          ? null
+          : IVAEstado.values.firstWhere((e) => e.name == m['iva_estado']),
+      periodicDate: perDate,
+      periodicMontante: perMont,
+      recapDate: _parseDate(m['recap_data']),
+      recapMontante: (m['recap_montante'] as num?)?.toDouble(),
+      recapitulativa: m['recapitulativa'] as bool?,
+      data: _parseDate(m['data']),
+      montante: (m['montante'] as num?)?.toDouble(),
+    );
+  }
+
+  /// Map preferencial (usa colunas novas se existirem na BD)
   Map<String, dynamic> toMap() => {
         'company_id': companyId,
         'task_key': taskKey,
@@ -190,15 +195,32 @@ class TaskInstance {
         'done': done,
         'responsible_id': responsibleId,
         'iva_estado': ivaEstado?.name,
-        // novos campos
+
+        // Periódica
         'periodic_data': periodicDate?.toIso8601String(),
         'periodic_montante': periodicMontante,
+        // mantém compat
+        'data': periodicDate?.toIso8601String(),
+        'montante': periodicMontante,
+
+        // Recapitulativa (novos campos)
         'recap_data': recapDate?.toIso8601String(),
         'recap_montante': recapMontante,
         'recapitulativa': recapitulativa,
-        // legado (opcional) — espelhar periodic nos antigos para compat
-        'data': data ?? periodicDate?.toIso8601String(),
-        'montante': montante ?? periodicMontante,
+      };
+
+  /// Map "à prova de tudo" – apenas colunas legacy
+  Map<String, dynamic> toLegacyMap() => {
+        'company_id': companyId,
+        'task_key': taskKey,
+        'year': year,
+        'month': month,
+        'done': done,
+        'responsible_id': responsibleId,
+        'iva_estado': ivaEstado?.name,
+        'data': periodicDate?.toIso8601String() ?? data?.toIso8601String(),
+        'montante': periodicMontante ?? montante,
+        'recapitulativa': recapitulativa,
       };
 }
 
