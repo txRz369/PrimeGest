@@ -17,7 +17,6 @@ class Repository {
 
   // ----------------------------- INIT -----------------------------
   void seed() {
-    // Carrega tudo em background (UI lê as caches).
     _refreshAll();
   }
 
@@ -44,7 +43,19 @@ class Repository {
             nome: r['nome'],
             periodicidade: PeriodicidadeX.fromLabel(r['periodicidade']),
             importancia: (r['importancia'] ?? 3) as int,
+            logoUrl: r['logo_url'],
           )));
+
+    // carregar ids de tarefas atribuídas (para pré-seleção)
+    for (final e in empresas) {
+      final rows = await Supa.client
+          .from('empresa_tarefas')
+          .select('tarefa_id')
+          .eq('empresa_id', e.id);
+      e.tarefaIds
+        ..clear()
+        ..addAll(rows.map<String>((r) => r['tarefa_id'] as String));
+    }
   }
 
   Future<void> _loadTarefas() async {
@@ -118,15 +129,25 @@ class Repository {
 
   // ----------------------------- VISÃO POR UTILIZADOR --------------
   List<Empresa> empresasForUser(User user) {
-    // O RLS do Supabase já filtra; aqui devolvemos a cache ordenada.
-    final list = [...empresas]
+    if (user.isAdmin) {
+      final list = [...empresas]
+        ..sort((a, b) => b.importancia.compareTo(a.importancia));
+      return list;
+    }
+    // contabilista: apenas empresas de equipas onde pertence
+    final myId = user.contabilistaId;
+    final allowed = <String>{};
+    for (final eq in equipas) {
+      if (eq.contabilistaIds.contains(myId)) {
+        allowed.addAll(eq.empresaIds);
+      }
+    }
+    final list = empresas.where((e) => allowed.contains(e.id)).toList()
       ..sort((a, b) => b.importancia.compareTo(a.importancia));
     return list;
   }
 
   // ----------------------------- TAREFAS DA EMPRESA ----------------
-  /// Versão síncrona para o UI: devolve cache (ou lista vazia na 1ª vez)
-  /// e dispara um carregamento em background.
   List<Tarefa> tarefasDaEmpresa(String empresaId, {bool apenasAtivas = true}) {
     final cached = _empTarefas[empresaId];
     if (cached == null) {
@@ -139,7 +160,6 @@ class Repository {
     return list;
   }
 
-  /// Leitura assíncrona direta do Supabase (útil se quiseres usar FutureBuilder)
   Future<List<Tarefa>> _tarefasDaEmpresaAsync(String empresaId,
       {bool apenasAtivas = true}) async {
     final rows = await Supa.client
@@ -170,6 +190,21 @@ class Repository {
   }
 
   void setEmpresaTarefas(String empresaId, Set<String> tarefaIds) {
+    // Atualiza o objeto Empresa em cache
+    final emp = empresas.where((e) => e.id == empresaId);
+    if (emp.isNotEmpty) {
+      emp.first.tarefaIds
+        ..clear()
+        ..addAll(tarefaIds);
+    }
+
+    // Atualiza de imediato a lista de tarefas resolvida
+    _empTarefas[empresaId] = tarefas
+        .where((t) => tarefaIds.contains(t.id))
+        .toList()
+      ..sort((a, b) => a.nome.compareTo(b.nome));
+
+    // Persistência no servidor
     () async {
       await Supa.client
           .from('empresa_tarefas')
@@ -197,6 +232,9 @@ class Repository {
   }
 
   Future<void> _loadConclusoes(String empresaId, String ym) async {
+    _conclusoes.removeWhere(
+      (k) => k.startsWith('$empresaId|') && k.endsWith('|$ym'),
+    );
     final rows = await Supa.client
         .from('task_completions')
         .select('tarefa_id')
@@ -229,7 +267,6 @@ class Repository {
     }();
   }
 
-  /// Contagem rápida baseada em caches (pode apresentar 0/0 na 1ª renderização).
   TaskProgress progressoEmpresaMes(String empresaId, String ym) {
     final tasks = tarefasDaEmpresa(empresaId);
     int feitas = 0;
@@ -239,7 +276,6 @@ class Repository {
     return TaskProgress(tasks.length, feitas);
   }
 
-  /// Versão assíncrona precisa (se quiseres usar com FutureBuilder)
   Future<TaskProgress> progressoEmpresaMesFuture(
       String empresaId, String ym) async {
     final total = (await _tarefasDaEmpresaAsync(empresaId)).length;
@@ -254,15 +290,13 @@ class Repository {
 
   // ----------------------------- CRUD TAREFAS -----------------------
   Tarefa addTarefa(Tarefa t) {
-    // Atualiza UI imediatamente (optimistic), sincroniza com servidor em background
     tarefas.add(t);
     () async {
-      final row = await Supa.client
+      await Supa.client
           .from('tarefas')
           .insert({'nome': t.nome, 'descricao': t.descricao, 'ativa': t.ativa})
           .select()
           .single();
-      // Recarrega para garantir consistência (id real, etc.)
       await _loadTarefas();
     }();
     return t;
@@ -272,7 +306,6 @@ class Repository {
     final n = nome ?? t.nome;
     final d = descricao ?? t.descricao;
     final a = ativa ?? t.ativa;
-    // Optimistic update
     t
       ..nome = n
       ..descricao = d
@@ -294,8 +327,7 @@ class Repository {
   }
 
   // ----------------------------- CRUD EMPRESAS ----------------------
-  Empresa addEmpresa(Empresa e) {
-    // Optimistic
+  Empresa addEmpresa(Empresa e, {Set<String>? tarefaIds}) {
     empresas.add(e);
     () async {
       final row = await Supa.client
@@ -305,9 +337,20 @@ class Repository {
             'nome': e.nome,
             'periodicidade': e.periodicidade.label.toLowerCase(),
             'importancia': e.importancia,
+            if (e.logoUrl != null) 'logo_url': e.logoUrl,
           })
           .select()
           .single();
+
+      if (tarefaIds != null && tarefaIds.isNotEmpty) {
+        final newId = row['id'] as String;
+        await Supa.client.from('empresa_tarefas').insert(
+              tarefaIds
+                  .map((id) => {'empresa_id': newId, 'tarefa_id': id})
+                  .toList(),
+            );
+        await _loadEmpresaTarefas(newId);
+      }
       await _loadEmpresas();
     }();
     return e;
@@ -317,11 +360,13 @@ class Repository {
       {String? nif,
       String? nome,
       Periodicidade? periodicidade,
-      int? importancia}) {
+      int? importancia,
+      String? logoUrl}) {
     if (nif != null) e.nif = nif;
     if (nome != null) e.nome = nome;
     if (periodicidade != null) e.periodicidade = periodicidade;
     if (importancia != null) e.importancia = importancia;
+    if (logoUrl != null) e.logoUrl = logoUrl;
 
     final data = <String, dynamic>{};
     if (nif != null) data['nif'] = nif;
@@ -329,6 +374,7 @@ class Repository {
     if (periodicidade != null)
       data['periodicidade'] = periodicidade.label.toLowerCase();
     if (importancia != null) data['importancia'] = importancia;
+    if (logoUrl != null) data['logo_url'] = logoUrl;
 
     () async {
       await Supa.client.from('empresas').update(data).eq('id', e.id);
@@ -345,8 +391,6 @@ class Repository {
   }
 
   // ----------------------------- CRUD PROFILES ----------------------
-  /// NOTA: criar utilizadores em Auth precisa de Service Role (não disponível no cliente).
-  /// Aqui assume-se que o user já existe em Auth; esta função faz upsert no profile.
   Contabilista addContabilista(Contabilista c) {
     contabilistas.add(c);
     () async {
@@ -404,7 +448,7 @@ class Repository {
   Equipa addEquipa(Equipa e) {
     equipas.add(e);
     () async {
-      final row = await Supa.client
+      await Supa.client
           .from('equipas')
           .insert({'nome': e.nome})
           .select()

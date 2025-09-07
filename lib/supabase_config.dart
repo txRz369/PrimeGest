@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class Supa {
@@ -17,4 +18,24 @@ class Supa {
   }
 
   static SupabaseClient get client => Supabase.instance.client;
+
+  /// Helper: envia bytes para um bucket e devolve a URL pública.
+  static Future<String?> uploadImageBytes({
+    required String bucket,
+    required String path,
+    required Uint8List bytes,
+    String? contentType,
+  }) async {
+    try {
+      await client.storage.from(bucket).uploadBinary(path, bytes,
+          fileOptions: FileOptions(
+            upsert: true,
+            contentType: contentType,
+          ));
+      final publicUrl = client.storage.from(bucket).getPublicUrl(path);
+      return publicUrl;
+    } catch (_) {
+      return null;
+    }
+  }
 }

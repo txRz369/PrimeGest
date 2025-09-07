@@ -53,9 +53,12 @@ class User {
   final bool isAdmin;
   final String? contabilistaId;
   final String username;
-  User.admin() : isAdmin = true, contabilistaId = null, username = 'admin';
+  User.admin()
+      : isAdmin = true,
+        contabilistaId = null,
+        username = 'admin';
   User.contabilista({required this.contabilistaId, required this.username})
-    : isAdmin = false;
+      : isAdmin = false;
 }
 
 String makeId([String? prefix]) {
@@ -70,7 +73,7 @@ class Tarefa {
   String? descricao;
   bool ativa;
   Tarefa({String? id, required this.nome, this.descricao, this.ativa = true})
-    : id = id ?? makeId('tsk');
+      : id = id ?? makeId('tsk');
 }
 
 class Empresa {
@@ -80,6 +83,7 @@ class Empresa {
   Periodicidade periodicidade;
   int importancia; // 0..5
   final Set<String> tarefaIds; // tarefas atribuídas à empresa
+  String? logoUrl; // <-- NOVO: url pública do logotipo
 
   Empresa({
     String? id,
@@ -88,8 +92,9 @@ class Empresa {
     required this.periodicidade,
     required this.importancia,
     Set<String>? tarefaIds,
-  }) : id = id ?? makeId('emp'),
-       tarefaIds = tarefaIds ?? <String>{};
+    this.logoUrl,
+  })  : id = id ?? makeId('emp'),
+        tarefaIds = tarefaIds ?? <String>{};
 }
 
 class Contabilista {
@@ -120,9 +125,9 @@ class Equipa {
     required this.nome,
     Set<String>? contabilistaIds,
     Set<String>? empresaIds,
-  }) : id = id ?? makeId('eqp'),
-       contabilistaIds = contabilistaIds ?? <String>{},
-       empresaIds = empresaIds ?? <String>{};
+  })  : id = id ?? makeId('eqp'),
+        contabilistaIds = contabilistaIds ?? <String>{},
+        empresaIds = empresaIds ?? <String>{};
 }
 
 /// Chave YYYY-MM para controlo mensal

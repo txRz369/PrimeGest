@@ -1,8 +1,12 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:mime/mime.dart';
 import '../main.dart';
 import '../models.dart';
 import '../repository.dart';
+import '../supabase_config.dart';
 import 'widgets.dart';
+import 'package:file_picker/file_picker.dart';
 
 class ContabilistasPage extends StatefulWidget {
   const ContabilistasPage({super.key});
@@ -63,10 +67,18 @@ class _ContabilistasPageState extends State<ContabilistasPage> {
                 separatorBuilder: (_, __) => const SizedBox(height: 8),
                 itemBuilder: (_, i) {
                   final c = list[i];
+
+                  ImageProvider? img;
+                  if (c.fotoUrl != null && c.fotoUrl!.isNotEmpty) {
+                    img = NetworkImage(c.fotoUrl!);
+                  }
+
                   return Card(
                     child: ListTile(
                       leading: CircleAvatar(
-                        child: Text(c.nome.substring(0, 1)),
+                        backgroundImage: img,
+                        child:
+                            img == null ? Text(c.nome.substring(0, 1)) : null,
                       ),
                       title: Text('${c.nome} • ${c.nivel.label}'),
                       subtitle: Text(
@@ -127,125 +139,161 @@ class _ContabilistasPageState extends State<ContabilistasPage> {
     final username = TextEditingController(text: original?.username ?? '');
     DateTime nasc = original?.nascimento ?? DateTime(1990, 1, 1);
     NivelProf nivel = original?.nivel ?? NivelProf.junior;
-    final foto = TextEditingController(text: original?.fotoUrl ?? '');
 
-    showModalBottomSheet(
+    Uint8List? fotoBytes;
+    String? fotoFilename;
+
+    showDialog(
       context: context,
-      isScrollControlled: true,
-      builder: (_) => Padding(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).viewInsets.bottom + 16,
-          left: 16,
-          right: 16,
-          top: 16,
-        ),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                original == null ? 'Novo Contabilista' : 'Editar Contabilista',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: nome,
-                decoration: const InputDecoration(labelText: 'Nome'),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: username,
-                decoration: const InputDecoration(labelText: 'Utilizador'),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: foto,
-                decoration: const InputDecoration(
-                  labelText: 'Foto (URL, opcional)',
-                ),
-              ),
-              const SizedBox(height: 8),
-              Row(
+      barrierDismissible: false,
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setStateDialog) {
+          ImageProvider? img;
+          if (fotoBytes != null) {
+            img = MemoryImage(fotoBytes!);
+          } else if (original?.fotoUrl != null) {
+            img = NetworkImage(original!.fotoUrl!);
+          }
+
+          return AlertDialog(
+            title: Text(
+                original == null ? 'Novo Contabilista' : 'Editar Contabilista'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Expanded(
-                    child: DropdownButtonFormField<NivelProf>(
-                      value: nivel,
-                      onChanged: (v) => nivel = v ?? nivel,
-                      items: NivelProf.values
-                          .map(
-                            (n) => DropdownMenuItem(
-                              value: n,
-                              child: Text(n.label),
-                            ),
-                          )
-                          .toList(),
-                      decoration: const InputDecoration(
-                        labelText: 'Nível Profissional',
+                  Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 28,
+                        backgroundImage: img,
+                        child: img == null ? const Icon(Icons.person) : null,
                       ),
-                    ),
+                      const SizedBox(width: 12),
+                      OutlinedButton.icon(
+                        icon: const Icon(Icons.upload),
+                        label: const Text('Importar foto'),
+                        onPressed: () async {
+                          final res = await FilePicker.platform.pickFiles(
+                            type: FileType.image,
+                            withData: true,
+                          );
+                          if (res != null && res.files.single.bytes != null) {
+                            setStateDialog(() {
+                              fotoBytes = res.files.single.bytes!;
+                              fotoFilename = res.files.single.name;
+                            });
+                          }
+                        },
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      icon: const Icon(Icons.cake),
-                      label: Text(
-                        'Nascimento: ${nasc.day.toString().padLeft(2, '0')}/${nasc.month.toString().padLeft(2, '0')}/${nasc.year}',
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: nome,
+                    decoration: const InputDecoration(labelText: 'Nome'),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: username,
+                    decoration: const InputDecoration(labelText: 'Utilizador'),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: DropdownButtonFormField<NivelProf>(
+                          value: nivel,
+                          onChanged: (v) => nivel = v ?? nivel,
+                          items: NivelProf.values
+                              .map(
+                                (n) => DropdownMenuItem(
+                                  value: n,
+                                  child: Text(n.label),
+                                ),
+                              )
+                              .toList(),
+                          decoration: const InputDecoration(
+                            labelText: 'Nível Profissional',
+                          ),
+                        ),
                       ),
-                      onPressed: () async {
-                        final picked = await showDatePicker(
-                          context: context,
-                          initialDate: nasc,
-                          firstDate: DateTime(1950),
-                          lastDate: DateTime(DateTime.now().year - 18, 12, 31),
-                        );
-                        if (picked != null) {
-                          nasc = picked;
-                          (context as Element).markNeedsBuild();
-                        }
-                      },
-                    ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          icon: const Icon(Icons.cake),
+                          label: Text(
+                            'Nascimento: ${nasc.day.toString().padLeft(2, '0')}/${nasc.month.toString().padLeft(2, '0')}/${nasc.year}',
+                          ),
+                          onPressed: () async {
+                            final picked = await showDatePicker(
+                              context: context,
+                              initialDate: nasc,
+                              firstDate: DateTime(1950),
+                              lastDate:
+                                  DateTime(DateTime.now().year - 18, 12, 31),
+                            );
+                            if (picked != null) {
+                              nasc = picked;
+                              setStateDialog(() {});
+                            }
+                          },
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
-              Align(
-                alignment: Alignment.centerRight,
-                child: FilledButton(
-                  onPressed: () {
-                    if (nome.text.trim().isEmpty ||
-                        username.text.trim().isEmpty) return;
-                    if (original == null) {
-                      repo.addContabilista(
-                        Contabilista(
-                          nome: nome.text.trim(),
-                          nascimento: nasc,
-                          nivel: nivel,
-                          fotoUrl: foto.text.trim().isEmpty
-                              ? null
-                              : foto.text.trim(),
-                          username: username.text.trim(),
-                        ),
-                      );
-                    } else {
-                      repo.updateContabilista(
-                        original,
+            ),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Cancelar')),
+              FilledButton(
+                onPressed: () async {
+                  if (nome.text.trim().isEmpty || username.text.trim().isEmpty)
+                    return;
+
+                  String? fotoUrl = original?.fotoUrl;
+                  if (fotoBytes != null) {
+                    final ext = (fotoFilename ?? 'avatar.jpg').split('.').last;
+                    final path = 'avatars/${makeId('avatar')}.$ext';
+                    fotoUrl = await Supa.uploadImageBytes(
+                      bucket: 'avatars',
+                      path: path,
+                      bytes: fotoBytes!,
+                      contentType: lookupMimeType(path),
+                    );
+                  }
+
+                  if (original == null) {
+                    repo.addContabilista(
+                      Contabilista(
                         nome: nome.text.trim(),
                         nascimento: nasc,
                         nivel: nivel,
-                        fotoUrl:
-                            foto.text.trim().isEmpty ? null : foto.text.trim(),
+                        fotoUrl: fotoUrl,
                         username: username.text.trim(),
-                      );
-                    }
-                    Navigator.pop(context);
-                    setState(() {});
-                  },
-                  child: const Text('Guardar'),
-                ),
+                      ),
+                    );
+                  } else {
+                    repo.updateContabilista(
+                      original,
+                      nome: nome.text.trim(),
+                      nascimento: nasc,
+                      nivel: nivel,
+                      fotoUrl: fotoUrl,
+                      username: username.text.trim(),
+                    );
+                  }
+                  if (context.mounted) Navigator.pop(context);
+                  setState(() {});
+                },
+                child: const Text('Guardar'),
               ),
             ],
-          ),
-        ),
+          );
+        },
       ),
     );
   }

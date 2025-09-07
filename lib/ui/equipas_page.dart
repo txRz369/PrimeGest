@@ -81,7 +81,7 @@ class _EquipasPageState extends State<EquipasPage> {
                             ],
                           ),
                           const SizedBox(height: 6),
-                          Text('Contabilistas:'),
+                          const Text('Contabilistas:'),
                           Wrap(
                             spacing: 6,
                             children: ctb
@@ -93,7 +93,7 @@ class _EquipasPageState extends State<EquipasPage> {
                                 .toList(),
                           ),
                           const SizedBox(height: 6),
-                          Text('Empresas:'),
+                          const Text('Empresas:'),
                           Wrap(
                             spacing: 6,
                             children: emps
@@ -146,25 +146,15 @@ class _EquipasPageState extends State<EquipasPage> {
     final selCont = <String>{...?(original?.contabilistaIds)};
     final selEmp = <String>{...?(original?.empresaIds)};
 
-    showModalBottomSheet(
+    showDialog(
       context: context,
-      isScrollControlled: true,
-      builder: (_) => Padding(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).viewInsets.bottom + 16,
-          left: 16,
-          right: 16,
-          top: 16,
-        ),
-        child: SingleChildScrollView(
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        title: Text(original == null ? 'Nova Equipa' : 'Editar Equipa'),
+        content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(
-                original == null ? 'Nova Equipa' : 'Editar Equipa',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 12),
               TextField(
                 controller: nome,
                 decoration: const InputDecoration(labelText: 'Nome da Equipa'),
@@ -202,41 +192,47 @@ class _EquipasPageState extends State<EquipasPage> {
                     .toList(),
                 selected: selEmp,
               ),
-              const SizedBox(height: 16),
-              Align(
-                alignment: Alignment.centerRight,
-                child: FilledButton(
-                  onPressed: () {
-                    if (nome.text.trim().isEmpty) return;
-                    if (original == null) {
-                      final eq = repo.addEquipa(Equipa(nome: nome.text.trim()));
-                      for (final id in selCont)
-                        repo.assignContabilistaToEquipa(id, eq.id);
-                      for (final id in selEmp)
-                        repo.assignEmpresaToEquipa(id, eq.id);
-                    } else {
-                      repo.updateEquipa(original, nome: nome.text.trim());
-                      // reset assignments
-                      for (final c in repo.contabilistas) {
-                        repo.unassignContabilistaFromEquipa(c.id, original.id);
-                      }
-                      for (final e in repo.empresas) {
-                        repo.unassignEmpresaFromEquipa(e.id, original.id);
-                      }
-                      for (final id in selCont)
-                        repo.assignContabilistaToEquipa(id, original.id);
-                      for (final id in selEmp)
-                        repo.assignEmpresaToEquipa(id, original.id);
-                    }
-                    Navigator.pop(context);
-                    setState(() {});
-                  },
-                  child: const Text('Guardar'),
-                ),
-              ),
             ],
           ),
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (nome.text.trim().isEmpty) return;
+              if (original == null) {
+                final eq = repo.addEquipa(Equipa(nome: nome.text.trim()));
+                for (final id in selCont) {
+                  repo.assignContabilistaToEquipa(id, eq.id);
+                }
+                for (final id in selEmp) {
+                  repo.assignEmpresaToEquipa(id, eq.id);
+                }
+              } else {
+                repo.updateEquipa(original, nome: nome.text.trim());
+                // reset assignments
+                for (final c in repo.contabilistas) {
+                  repo.unassignContabilistaFromEquipa(c.id, original.id);
+                }
+                for (final e in repo.empresas) {
+                  repo.unassignEmpresaFromEquipa(e.id, original.id);
+                }
+                for (final id in selCont) {
+                  repo.assignContabilistaToEquipa(id, original.id);
+                }
+                for (final id in selEmp) {
+                  repo.assignEmpresaToEquipa(id, original.id);
+                }
+              }
+              if (mounted) Navigator.pop(context);
+              setState(() {});
+            },
+            child: const Text('Guardar'),
+          ),
+        ],
       ),
     );
   }

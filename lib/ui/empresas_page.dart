@@ -1,7 +1,10 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:mime/mime.dart';
 import '../main.dart';
 import '../models.dart';
 import '../repository.dart';
+import '../supabase_config.dart';
 import 'widgets.dart';
 
 class EmpresasPage extends StatefulWidget {
@@ -63,43 +66,89 @@ class _EmpresasPageState extends State<EmpresasPage> {
                 separatorBuilder: (_, __) => const SizedBox(height: 8),
                 itemBuilder: (_, i) {
                   final e = list[i];
+
+                  ImageProvider? logo;
+                  if (e.logoUrl != null && e.logoUrl!.isNotEmpty) {
+                    logo = NetworkImage(e.logoUrl!);
+                  }
+
                   return Card(
-                    child: ListTile(
-                      title: Text(e.nome),
-                      subtitle: Text(
-                        '${e.nif} • ${e.periodicidade.label} • Imp. ${e.importancia}/5',
-                      ),
-                      trailing: Wrap(
-                        spacing: 8,
+                    child: Padding(
+                      padding: const EdgeInsets.all(12.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          OutlinedButton.icon(
-                            icon: const Icon(Icons.fact_check),
-                            label: const Text('Atribuir Tarefas'),
-                            onPressed: () async {
-                              final changed = await showDialog<bool>(
-                                context: context,
-                                builder: (_) => AtribuirTarefasDialog(
-                                  repo: repo,
-                                  empresa: e,
+                          Row(
+                            children: [
+                              CircleAvatar(
+                                backgroundImage: logo,
+                                child: logo == null
+                                    ? const Icon(Icons.apartment)
+                                    : null,
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  e.nome,
+                                  style: Theme.of(
+                                    context,
+                                  ).textTheme.titleMedium,
                                 ),
-                              );
-                              if (changed == true && mounted) setState(() {});
-                            },
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.expand_more),
+                                onPressed: () {
+                                  // apenas efeito visual (card é fixo)
+                                },
+                              ),
+                            ],
                           ),
-                          IconButton(
-                            icon: const Icon(Icons.edit),
-                            onPressed: () => _editarEmpresaDialog(
-                              context,
-                              repo,
-                              original: e,
+                          const SizedBox(height: 4),
+                          Text(
+                            '${e.nif} • ${e.periodicidade.label} • Imp. ${e.importancia}',
+                          ),
+                          const Divider(),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              OutlinedButton.icon(
+                                icon: const Icon(Icons.fact_check),
+                                label: const Text('Atribuir Tarefas'),
+                                onPressed: () async {
+                                  final changed = await showDialog<bool>(
+                                    context: context,
+                                    builder: (_) => AtribuirTarefasDialog(
+                                      repo: repo,
+                                      empresa: e,
+                                    ),
+                                  );
+                                  if (changed == true && mounted)
+                                    setState(() {});
+                                },
+                              ),
+                              const SizedBox(width: 8),
+                              IconButton(
+                                icon: const Icon(Icons.edit),
+                                onPressed: () => _editarEmpresaDialog(
+                                  context,
+                                  repo,
+                                  original: e,
+                                ),
+                                tooltip: 'Editar',
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.delete),
+                                onPressed: () =>
+                                    _removerEmpresa(context, repo, e),
+                                tooltip: 'Remover',
+                              ),
+                            ],
+                          ),
+                          if (e.tarefaIds.isEmpty)
+                            const Padding(
+                              padding: EdgeInsets.only(top: 8.0),
+                              child: Text('Sem tarefas atribuídas.'),
                             ),
-                            tooltip: 'Editar',
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.delete),
-                            onPressed: () => _removerEmpresa(context, repo, e),
-                            tooltip: 'Remover',
-                          ),
                         ],
                       ),
                     ),
@@ -141,33 +190,42 @@ class _EmpresasPageState extends State<EmpresasPage> {
     Repository repo, {
     Empresa? original,
   }) {
-    showModalBottomSheet(
+    showDialog(
       context: context,
-      isScrollControlled: true,
-      builder: (_) => Padding(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).viewInsets.bottom + 16,
-          left: 16,
-          right: 16,
-          top: 16,
-        ),
-        child: EmpresaEditor(
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        content: EmpresaEditor(
           original: original,
-          onSave: (e) {
+          repo: repo,
+          onSave: (e, tarefasSel, logoBytes, logoName) async {
+            String? logoUrl;
+            if (logoBytes != null) {
+              final ext = (logoName ?? 'logo.png').split('.').last;
+              final path = 'logos/${makeId('logo')}.$ext';
+              logoUrl = await Supa.uploadImageBytes(
+                bucket: 'logos',
+                path: path,
+                bytes: logoBytes,
+                contentType: lookupMimeType(path),
+              );
+              e.logoUrl = logoUrl ?? e.logoUrl;
+            }
             if (original == null) {
-              setState(() => repo.addEmpresa(e));
+              setState(() => repo.addEmpresa(e, tarefaIds: tarefasSel));
             } else {
-              setState(
-                () => repo.updateEmpresa(
+              setState(() {
+                repo.updateEmpresa(
                   original,
                   nif: e.nif,
                   nome: e.nome,
                   periodicidade: e.periodicidade,
                   importancia: e.importancia,
-                ),
-              );
+                  logoUrl: logoUrl,
+                );
+                repo.setEmpresaTarefas(original.id, tarefasSel);
+              });
             }
-            Navigator.pop(context);
+            if (context.mounted) Navigator.pop(context);
           },
         ),
       ),

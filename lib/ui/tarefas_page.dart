@@ -125,48 +125,46 @@ class _TarefasPageState extends State<TarefasPage> {
     final desc = TextEditingController(text: original?.descricao ?? '');
     bool ativa = original?.ativa ?? true;
 
-    showModalBottomSheet(
+    showDialog(
       context: context,
-      isScrollControlled: true,
-      builder: (_) => Padding(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).viewInsets.bottom + 16,
-          left: 16,
-          right: 16,
-          top: 16,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              original == null ? 'Nova Tarefa' : 'Editar Tarefa',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: nome,
-              decoration: const InputDecoration(labelText: 'Nome'),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: desc,
-              decoration: const InputDecoration(
-                labelText: 'Descrição (opcional)',
+      barrierDismissible: false,
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setDialog) {
+          return AlertDialog(
+            title: Text(original == null ? 'Nova Tarefa' : 'Editar Tarefa'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: nome,
+                    decoration: const InputDecoration(labelText: 'Nome'),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: desc,
+                    decoration: const InputDecoration(
+                      labelText: 'Descrição (opcional)',
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SwitchListTile(
+                    value: ativa,
+                    onChanged: (v) => setDialog(() => ativa = v),
+                    title: const Text('Ativa'),
+                    subtitle: const Text(
+                      'Tarefas inativas não aparecem no Controlo Interno.',
+                    ),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 8),
-            SwitchListTile(
-              value: ativa,
-              onChanged: (v) => ativa = v,
-              title: const Text('Ativa'),
-              subtitle: const Text(
-                'Tarefas inativas não aparecem no Controlo Interno.',
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancelar'),
               ),
-            ),
-            const SizedBox(height: 12),
-            Align(
-              alignment: Alignment.centerRight,
-              child: FilledButton(
+              FilledButton(
                 onPressed: () {
                   if (nome.text.trim().isEmpty) return;
                   if (original == null) {
@@ -187,14 +185,14 @@ class _TarefasPageState extends State<TarefasPage> {
                       ativa: ativa,
                     );
                   }
-                  Navigator.pop(context);
+                  if (context.mounted) Navigator.pop(context);
                   setState(() {});
                 },
                 child: const Text('Guardar'),
               ),
-            ),
-          ],
-        ),
+            ],
+          );
+        },
       ),
     );
   }

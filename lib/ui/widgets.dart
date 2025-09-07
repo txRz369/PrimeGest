@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import '../models.dart';
 import '../repository.dart';
 import '../main.dart';
+import 'package:file_picker/file_picker.dart';
+import 'dart:typed_data';
 
-/// Drawer lateral com permissões
+/// Scaffold com Drawer; se [title] for vazio, mostra o logotipo no AppBar.
 class AppScaffold extends StatelessWidget {
   final String title;
   final Widget body;
@@ -23,8 +25,17 @@ class AppScaffold extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(title),
-        actions: [if (showMonthBar) _MonthSelector(), const SizedBox(width: 8)],
+        title: title.isEmpty
+            ? Image.asset(
+                'assets/cascata.png',
+                height: 28,
+                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+              )
+            : Text(title),
+        actions: [
+          if (showMonthBar) _MonthSelector(),
+          const SizedBox(width: 8),
+        ],
       ),
       drawer: Drawer(
         child: SafeArea(
@@ -45,11 +56,8 @@ class AppScaffold extends StatelessWidget {
                       : 'Acesso: Controlo Interno',
                 ),
                 currentAccountPicture: CircleAvatar(
-                  child: Text(
-                    user?.isAdmin == true
-                        ? 'AD'
-                        : (user?.username.substring(0, 1).toUpperCase() ?? 'U'),
-                  ),
+                  backgroundColor: Colors.transparent,
+                  backgroundImage: const AssetImage('assets/cascata.png'),
                 ),
               ),
               ListTile(
@@ -104,50 +112,40 @@ class AppScaffold extends StatelessWidget {
   }
 }
 
-/// Seletor de Mês/Ano para a AppBar
+/// Seletor de mês/ano num botão com DatePicker
 class _MonthSelector extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final app = AppScope.of(context);
     final month = app.selectedMonth;
-    final months = List.generate(12, (i) => i + 1);
-    final years = List.generate(7, (i) => DateTime.now().year - 3 + i);
+    String label() => '${month.year}/${month.month.toString().padLeft(2, '0')}';
 
-    return Row(
-      children: [
-        DropdownButton<int>(
-          value: month.month,
-          onChanged: (m) {
-            if (m == null) return;
-            app.setMonth(DateTime(month.year, m, 1));
-          },
-          items: months
-              .map(
-                (m) => DropdownMenuItem(
-                  value: m,
-                  child: Text(m.toString().padLeft(2, '0')),
-                ),
-              )
-              .toList(),
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: OutlinedButton.icon(
+        icon: const Icon(Icons.calendar_month),
+        label: Text(label()),
+        style: OutlinedButton.styleFrom(
+          visualDensity: VisualDensity.compact,
         ),
-        const SizedBox(width: 6),
-        DropdownButton<int>(
-          value: month.year,
-          onChanged: (y) {
-            if (y == null) return;
-            app.setMonth(DateTime(y, month.month, 1));
-          },
-          items: years
-              .map((y) => DropdownMenuItem(value: y, child: Text('$y')))
-              .toList(),
-        ),
-        const SizedBox(width: 8),
-      ],
+        onPressed: () async {
+          final picked = await showDatePicker(
+            context: context,
+            initialDate: month,
+            firstDate: DateTime(DateTime.now().year - 3, 1),
+            lastDate: DateTime(DateTime.now().year + 3, 12, 31),
+            helpText: 'Selecionar mês/ano',
+          );
+          if (picked != null) {
+            app.setMonth(DateTime(picked.year, picked.month, 1));
+          }
+        },
+      ),
     );
   }
 }
 
-/// Chip simples de importância 0..5
+/// Chip de importância (apenas número)
 class ImportanciaPill extends StatelessWidget {
   final int value;
   const ImportanciaPill(this.value, {super.key});
@@ -159,7 +157,7 @@ class ImportanciaPill extends StatelessWidget {
       >= 4 => colors.errorContainer,
       3 => colors.tertiaryContainer,
       2 => colors.secondaryContainer,
-      _ => colors.surfaceVariant,
+      _ => colors.surfaceContainerHighest,
     };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -172,18 +170,30 @@ class ImportanciaPill extends StatelessWidget {
         children: [
           const Icon(Icons.priority_high, size: 14),
           const SizedBox(width: 4),
-          Text('Imp. $value/5'),
+          Text('Imp. $value'),
         ],
       ),
     );
   }
 }
 
-/// Editor compacto de empresa (formulário)
+/// ================= Editor de Empresa (Dialog) =================
 class EmpresaEditor extends StatefulWidget {
   final Empresa? original;
-  final void Function(Empresa e) onSave;
-  const EmpresaEditor({super.key, this.original, required this.onSave});
+  final Repository? repo;
+  final void Function(
+    Empresa e,
+    Set<String> tarefaIds,
+    Uint8List? logoBytes,
+    String? logoFilename,
+  ) onSave;
+
+  const EmpresaEditor({
+    super.key,
+    this.original,
+    required this.onSave,
+    this.repo,
+  });
 
   @override
   State<EmpresaEditor> createState() => _EmpresaEditorState();
@@ -196,6 +206,11 @@ class _EmpresaEditorState extends State<EmpresaEditor> {
   int importancia = 3;
   Periodicidade periodicidade = Periodicidade.mensal;
 
+  Uint8List? logoBytes;
+  String? logoFilename;
+
+  late Set<String> selecionadas;
+
   @override
   void initState() {
     super.initState();
@@ -204,82 +219,170 @@ class _EmpresaEditorState extends State<EmpresaEditor> {
     nome = TextEditingController(text: o?.nome ?? '');
     importancia = o?.importancia ?? 3;
     periodicidade = o?.periodicidade ?? Periodicidade.mensal;
+    selecionadas = {...(o?.tarefaIds ?? const <String>{})};
   }
 
   @override
   Widget build(BuildContext context) {
-    return Form(
-      key: _form,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextFormField(
-            controller: nif,
-            decoration: const InputDecoration(labelText: 'NIF'),
-            validator: (v) => (v == null || v.isEmpty) ? 'Obrigatório' : null,
-          ),
-          TextFormField(
-            controller: nome,
-            decoration: const InputDecoration(labelText: 'Nome'),
-            validator: (v) => (v == null || v.isEmpty) ? 'Obrigatório' : null,
-          ),
-          const SizedBox(height: 8),
-          Row(
+    final tarefas = (widget.repo?.tarefas ?? const <Tarefa>[]).toList()
+      ..sort((a, b) => a.nome.compareTo(b.nome));
+
+    ImageProvider? logoImg;
+    if (logoBytes != null) {
+      logoImg = MemoryImage(logoBytes!);
+    } else if (widget.original?.logoUrl != null) {
+      logoImg = NetworkImage(widget.original!.logoUrl!);
+    }
+
+    final tarefasWidget = tarefas.isEmpty
+        ? const SizedBox.shrink()
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: DropdownButtonFormField<Periodicidade>(
-                  decoration: const InputDecoration(labelText: 'Periodicidade'),
-                  value: periodicidade,
-                  onChanged: (p) =>
-                      setState(() => periodicidade = p ?? Periodicidade.mensal),
-                  items: Periodicidade.values
-                      .map(
-                        (p) => DropdownMenuItem(value: p, child: Text(p.label)),
-                      )
-                      .toList(),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Atribuir tarefas',
+                    style: Theme.of(context).textTheme.labelLarge),
+              ),
+              const SizedBox(height: 6),
+              ConstrainedBox(
+                constraints:
+                    const BoxConstraints(maxHeight: 280, minHeight: 80),
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: tarefas.length,
+                  itemBuilder: (_, i) {
+                    final t = tarefas[i];
+                    return CheckboxListTile(
+                      value: selecionadas.contains(t.id),
+                      onChanged: (v) {
+                        setState(() {
+                          if (v == true) {
+                            selecionadas.add(t.id);
+                          } else {
+                            selecionadas.remove(t.id);
+                          }
+                        });
+                      },
+                      title: Text(t.nome),
+                      subtitle: t.descricao == null ? null : Text(t.descricao!),
+                      controlAffinity: ListTileControlAffinity.leading,
+                      dense: true,
+                    );
+                  },
                 ),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: DropdownButtonFormField<int>(
-                  decoration: const InputDecoration(
-                    labelText: 'Importância (0-5)',
+              const SizedBox(height: 12),
+            ],
+          );
+
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 520),
+      child: Form(
+        key: _form,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  CircleAvatar(
+                    radius: 28,
+                    backgroundImage: logoImg,
+                    child: logoImg == null ? const Icon(Icons.image) : null,
                   ),
-                  value: importancia,
-                  onChanged: (i) => setState(() => importancia = i ?? 0),
-                  items: List.generate(
-                    6,
-                    (i) => DropdownMenuItem(value: i, child: Text('$i')),
+                  const SizedBox(width: 12),
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.upload),
+                    label: const Text('Escolher logotipo'),
+                    onPressed: () async {
+                      final res = await FilePicker.platform.pickFiles(
+                        type: FileType.image,
+                        withData: true,
+                      );
+                      if (res != null && res.files.single.bytes != null) {
+                        setState(() {
+                          logoBytes = res.files.single.bytes!;
+                          logoFilename = res.files.single.name;
+                        });
+                      }
+                    },
                   ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: nif,
+                decoration: const InputDecoration(labelText: 'NIF'),
+                validator: (v) =>
+                    (v == null || v.isEmpty) ? 'Obrigatório' : null,
+              ),
+              TextFormField(
+                controller: nome,
+                decoration: const InputDecoration(labelText: 'Nome'),
+                validator: (v) =>
+                    (v == null || v.isEmpty) ? 'Obrigatório' : null,
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: DropdownButtonFormField<Periodicidade>(
+                      decoration:
+                          const InputDecoration(labelText: 'Periodicidade'),
+                      initialValue: periodicidade,
+                      onChanged: (p) => setState(
+                          () => periodicidade = p ?? Periodicidade.mensal),
+                      items: Periodicidade.values
+                          .map((p) =>
+                              DropdownMenuItem(value: p, child: Text(p.label)))
+                          .toList(),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: DropdownButtonFormField<int>(
+                      decoration:
+                          const InputDecoration(labelText: 'Importância (0-5)'),
+                      initialValue: importancia,
+                      onChanged: (i) => setState(() => importancia = i ?? 0),
+                      items: List.generate(
+                        6,
+                        (i) => DropdownMenuItem(value: i, child: Text('$i')),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              tarefasWidget,
+              Align(
+                alignment: Alignment.centerRight,
+                child: FilledButton(
+                  onPressed: () {
+                    if (_form.currentState?.validate() != true) return;
+                    final e = widget.original ??
+                        Empresa(
+                          nif: nif.text.trim(),
+                          nome: nome.text.trim(),
+                          periodicidade: periodicidade,
+                          importancia: importancia,
+                        );
+                    if (widget.original != null) {
+                      e
+                        ..nif = nif.text.trim()
+                        ..nome = nome.text.trim()
+                        ..periodicidade = periodicidade
+                        ..importancia = importancia;
+                    }
+                    widget.onSave(e, selecionadas, logoBytes, logoFilename);
+                  },
+                  child: const Text('Guardar'),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          Align(
-            alignment: Alignment.centerRight,
-            child: FilledButton(
-              onPressed: () {
-                if (_form.currentState?.validate() != true) return;
-                final e = widget.original ??
-                    Empresa(
-                      nif: nif.text.trim(),
-                      nome: nome.text.trim(),
-                      periodicidade: periodicidade,
-                      importancia: importancia,
-                    );
-                if (widget.original != null) {
-                  e.nif = nif.text.trim();
-                  e.nome = nome.text.trim();
-                  e.periodicidade = periodicidade;
-                  e.importancia = importancia;
-                }
-                widget.onSave(e);
-              },
-              child: const Text('Guardar'),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -312,29 +415,43 @@ class _AtribuirTarefasDialogState extends State<AtribuirTarefasDialog> {
   Widget build(BuildContext context) {
     final tasks = widget.repo.tarefas.toList()
       ..sort((a, b) => a.nome.compareTo(b.nome));
+
     return AlertDialog(
       title: Text('Tarefas de ${widget.empresa.nome}'),
-      content: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 420, maxHeight: 420),
-        child: ListView.builder(
-          itemCount: tasks.length,
-          itemBuilder: (_, i) {
-            final t = tasks[i];
-            return CheckboxListTile(
-              value: selecionadas.contains(t.id),
-              onChanged: (v) => setState(() {
-                if (v == true) {
-                  selecionadas.add(t.id);
-                } else {
-                  selecionadas.remove(t.id);
-                }
-              }),
-              title: Text(t.nome),
-              subtitle: t.descricao == null ? null : Text(t.descricao!),
-            );
-          },
-        ),
-      ),
+      content: tasks.isEmpty
+          ? const SizedBox(
+              width: 420,
+              child: Text(
+                  'Não existem tarefas criadas. Vá a "Tarefas" e crie pelo menos uma.'),
+            )
+          : SizedBox(
+              width: 420,
+              height: 420,
+              child: Scrollbar(
+                thumbVisibility: true,
+                child: ListView.builder(
+                  itemCount: tasks.length,
+                  itemBuilder: (_, i) {
+                    final t = tasks[i];
+                    return CheckboxListTile(
+                      value: selecionadas.contains(t.id),
+                      onChanged: (v) {
+                        setState(() {
+                          if (v == true) {
+                            selecionadas.add(t.id);
+                          } else {
+                            selecionadas.remove(t.id);
+                          }
+                        });
+                      },
+                      title: Text(t.nome),
+                      subtitle: t.descricao == null ? null : Text(t.descricao!),
+                      controlAffinity: ListTileControlAffinity.leading,
+                    );
+                  },
+                ),
+              ),
+            ),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),

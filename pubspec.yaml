@@ -1,15 +1,19 @@
-name: PrimeGest
-description: App Controlo de Tarefas (Flutter + Supabase)
+name: appcontrolo
+description: Controlo de Tarefas
 publish_to: "none"
+
 version: 1.0.0+1
 
 environment:
-  sdk: ">=3.0.0 <4.0.0"
+  sdk: ">=3.3.0 <4.0.0"
+  flutter: ">=3.22.0"
 
 dependencies:
   flutter:
     sdk: flutter
   supabase_flutter: ^2.5.8
+  file_picker: ^10.3.2
+  mime: ^2.0.0
 
 dev_dependencies:
   flutter_test:
@@ -18,3 +22,5 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+     - assets/
