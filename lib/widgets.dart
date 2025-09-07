@@ -152,6 +152,7 @@ class CompanyCard extends StatefulWidget {
   final int year;
   final int month;
   final void Function(TaskInstance) onToggleTask;
+  // mantemos a assinatura, mas o controlo IVA grava direto via Supa
   final void Function(TaskInstance,
       {IVAEstado? estado, DateTime? data, double? montante}) onIVAChange;
   final Brightness brightness;
@@ -187,12 +188,18 @@ class _CompanyCardState extends State<CompanyCard> {
   }
 
   String _accName(String? id) {
+    if (id == null || id.isEmpty) return '—';
     final a = accountants.firstWhere(
       (x) => x.id == id,
       orElse: () =>
           Accountant(id: '', name: '—', cargo: Cargo.junior, email: ''),
     );
     return a.id.isEmpty ? '—' : a.name;
+  }
+
+  String _resolvedResponsible(TaskInstance ti) {
+    return _accName(
+        ti.responsibleId ?? widget.company.taskResponsibleByKey[ti.taskKey]);
   }
 
   @override
@@ -231,7 +238,7 @@ class _CompanyCardState extends State<CompanyCard> {
                 for (final ti in widget.monthInstances)
                   _TaskRow(
                     ti: ti,
-                    responsibleName: _accName(ti.responsibleId),
+                    responsibleName: _resolvedResponsible(ti),
                     brightness: widget.brightness,
                     onToggle: () => widget.onToggleTask(ti),
                     onIVAChange: (estado, data, montante) => widget.onIVAChange(
@@ -292,83 +299,11 @@ class _TaskRow extends StatelessWidget {
   }
 }
 
-class _RecapRes {
-  final bool isYes;
-  final DateTime? date;
-  final double? amount;
-  _RecapRes(this.isYes, this.date, this.amount);
-}
-
-class _RecapDialog extends StatefulWidget {
-  const _RecapDialog();
-  @override
-  State<_RecapDialog> createState() => _RecapDialogState();
-}
-
-class _RecapDialogState extends State<_RecapDialog> {
-  bool yes = true;
-  DateTime? date;
-  final amount = TextEditingController();
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Recapitulativa (Declaração IVA)'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          SwitchListTile(
-              value: yes,
-              onChanged: (v) => setState(() => yes = v),
-              title: const Text('Sim?')),
-          if (yes) ...[
-            TextField(
-                controller: amount,
-                decoration: const InputDecoration(labelText: 'Montante'),
-                keyboardType: TextInputType.number),
-            const SizedBox(height: 6),
-            OutlinedButton.icon(
-              onPressed: () async {
-                final now = DateTime.now();
-                final d = await showDatePicker(
-                    context: context,
-                    firstDate: DateTime(now.year - 1),
-                    lastDate: DateTime(now.year + 1),
-                    initialDate: now);
-                if (d != null) setState(() => date = d);
-              },
-              icon: const Icon(Icons.date_range),
-              label: Text(date == null
-                  ? 'Data'
-                  : '${date!.day}-${date!.month}-${date!.year}'),
-            ),
-          ],
-          const SizedBox(height: 4),
-          const Text(
-              'Se escolher "Não", a tarefa fica validada automaticamente.',
-              style: TextStyle(fontSize: 12)),
-        ],
-      ),
-      actions: [
-        TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancelar')),
-        FilledButton(
-          onPressed: () {
-            final amt = double.tryParse(
-                amount.text.replaceAll('.', '').replaceAll(',', '.'));
-            Navigator.pop(context, _RecapRes(yes, date, amt));
-          },
-          child: const Text('Confirmar'),
-        ),
-      ],
-    );
-  }
-}
-
+/// =================== IVA (campos independentes) ===================
 class _IVAControls extends StatefulWidget {
   final TaskInstance ti;
   final void Function(IVAEstado? estado, DateTime? data, double? montante)
-      onChange;
+      onChange; // mantido para não quebrar assinaturas externas
   final VoidCallback onToggleDone;
   final Brightness brightness;
   const _IVAControls(
@@ -382,25 +317,6 @@ class _IVAControls extends StatefulWidget {
 }
 
 class _IVAControlsState extends State<_IVAControls> {
-  final _montanteCtrl = TextEditingController();
-
-  @override
-  void initState() {
-    super.initState();
-    if (widget.ti.montante != null) {
-      _montanteCtrl.text = widget.ti.montante!.toStringAsFixed(0);
-    }
-  }
-
-  @override
-  void didUpdateWidget(covariant _IVAControls oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.ti.montante != oldWidget.ti.montante &&
-        widget.ti.montante != null) {
-      _montanteCtrl.text = widget.ti.montante!.toStringAsFixed(0);
-    }
-  }
-
   String _ivaLabel(IVAEstado s) {
     switch (s) {
       case IVAEstado.aPagar:
@@ -424,6 +340,9 @@ class _IVAControlsState extends State<_IVAControls> {
 
   Color _ivaColor(IVAEstado s) => colorForIVA(s, widget.brightness);
 
+  String _fmtDate(DateTime d) =>
+      '${d.day.toString().padLeft(2, '0')}-${d.month.toString().padLeft(2, '0')}-${d.year}';
+
   String _formatEuro(num? n) {
     if (n == null) return '';
     final neg = n < 0;
@@ -439,91 +358,359 @@ class _IVAControlsState extends State<_IVAControls> {
     return '${neg ? '-' : ''}$formatted €';
   }
 
+  Widget _pill(String text, {IconData? icon, Color? color}) {
+    return Chip(
+      avatar: icon == null ? null : Icon(icon, size: 16),
+      label: Text(text),
+      backgroundColor: (color ?? Colors.transparent).withOpacity(
+        color == null ? 0 : 0.15,
+      ),
+      side: BorderSide(color: color ?? Colors.transparent),
+      visualDensity: VisualDensity.compact,
+    );
+  }
+
+  Future<void> _openDialog() async {
+    final ti = widget.ti;
+
+    final result = await showDialog<_IVADialogResult>(
+      context: context,
+      builder: (_) => _IVADialog(
+        initialEstado: ti.ivaEstado,
+        initialPeriodicDate: ti.periodicDate,
+        initialPeriodicAmount: ti.periodicMontante,
+        initialRecapYes: ti.recapitulativa ??
+            (ti.recapDate != null || ti.recapMontante != null),
+        initialRecapDate: ti.recapDate,
+        initialRecapAmount: ti.recapMontante,
+      ),
+    );
+
+    if (result == null) return;
+
+    // Atualiza o modelo em memória
+    setState(() {
+      ti.ivaEstado = result.estado ?? ti.ivaEstado;
+      ti.periodicDate = result.periodicDate;
+      ti.periodicMontante = result.periodicAmount;
+      ti.recapitulativa = result.recapYes;
+      ti.recapDate = result.recapYes ? result.recapDate : null;
+      ti.recapMontante = result.recapYes ? result.recapAmount : null;
+
+      // também manter os campos legados em linha com Periódica (compat)
+      ti.data = ti.periodicDate;
+      ti.montante = ti.periodicMontante;
+    });
+
+    // Persiste diretamente (inclui todos os campos novos)
+    await Supa.upsertInstance(ti);
+
+    // Notifica pai (apenas com estado para não quebrar chamadas antigas)
+    widget.onChange(ti.ivaEstado, null, null);
+  }
+
+  bool get _hasAnyConfig =>
+      widget.ti.ivaEstado != null ||
+      widget.ti.periodicDate != null ||
+      widget.ti.periodicMontante != null ||
+      widget.ti.recapDate != null ||
+      widget.ti.recapMontante != null ||
+      widget.ti.recapitulativa == true;
+
   @override
   Widget build(BuildContext context) {
     final ti = widget.ti;
+
+    final actionBtn = OutlinedButton(
+      onPressed: _openDialog,
+      child: Text(_hasAnyConfig ? 'Alterar' : 'Configurar'),
+    );
+
+    if (!_hasAnyConfig) return actionBtn;
 
     return Wrap(
       spacing: 8,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        DropdownButton<IVAEstado>(
-          value: ti.ivaEstado,
-          hint: const Text('Estado IVA'),
-          items: IVAEstado.values
-              .map((e) => DropdownMenuItem(value: e, child: Text(_ivaLabel(e))))
-              .toList(),
-          onChanged: (v) {
-            setState(() => ti.ivaEstado = v);
-            widget.onChange(v, null, null);
-          },
-        ),
+        _pill('Periódica', icon: Icons.assignment_turned_in),
         if (ti.ivaEstado != null)
-          Chip(
-            label: Text(_ivaLabel(ti.ivaEstado!)),
-            backgroundColor: _ivaColor(ti.ivaEstado!).withOpacity(0.2),
-            side: BorderSide(color: _ivaColor(ti.ivaEstado!)),
-          ),
-        OutlinedButton.icon(
-          onPressed: () async {
-            final now = DateTime.now();
-            final d = await showDatePicker(
-                context: context,
-                firstDate: DateTime(now.year - 1),
-                lastDate: DateTime(now.year + 1),
-                initialDate: ti.data ?? now);
-            if (d != null) {
-              setState(() => ti.data = d);
-              widget.onChange(null, d, null);
-            }
-          },
-          icon: const Icon(Icons.event),
-          label: Text(ti.data == null
-              ? 'Data'
-              : '${ti.data!.day}-${ti.data!.month}-${ti.data!.year}'),
-        ),
-        SizedBox(
-          width: 140,
-          child: TextField(
-            controller: _montanteCtrl,
-            decoration: const InputDecoration(labelText: 'Montante'),
-            keyboardType: TextInputType.number,
-            onSubmitted: (v) {
-              final parsed =
-                  double.tryParse(v.replaceAll('.', '').replaceAll(',', '.'));
-              if (parsed != null) {
-                setState(() => ti.montante = parsed);
-                widget.onChange(null, null, parsed);
-              }
-            },
-          ),
-        ),
-        if (ti.recapitulativa == true && ti.montante != null)
-          Chip(label: Text(_formatEuro(ti.montante))),
-        OutlinedButton.icon(
-          icon: const Icon(Icons.rule),
-          label: const Text('Recapitulativa?'),
-          onPressed: () async {
-            final res = await showDialog<_RecapRes>(
-              context: context,
-              builder: (_) => const _RecapDialog(),
-            );
-            if (res == null) return;
+          _pill(_ivaLabel(ti.ivaEstado!), color: _ivaColor(ti.ivaEstado!)),
+        if (ti.periodicDate != null)
+          _pill(_fmtDate(ti.periodicDate!), icon: Icons.event),
+        if (ti.periodicMontante != null)
+          _pill(_formatEuro(ti.periodicMontante!), icon: Icons.euro),
+        const SizedBox(width: 6),
+        _pill('Recapitulativa', icon: Icons.rule),
+        if (ti.recapitulativa == true && ti.recapDate != null)
+          _pill(_fmtDate(ti.recapDate!), icon: Icons.event),
+        if (ti.recapitulativa == true && ti.recapMontante != null)
+          _pill(_formatEuro(ti.recapMontante!), icon: Icons.euro),
+        actionBtn,
+      ],
+    );
+  }
+}
 
-            if (res.isYes) {
-              setState(() {
-                ti.recapitulativa = true;
-                if (res.amount != null) ti.montante = res.amount;
-                if (res.date != null) ti.data = res.date;
-              });
-              widget.onChange(null, res.date, res.amount);
-            } else {
-              setState(() => ti.recapitulativa = false);
-              widget.onToggleDone();
-            }
+class _IVADialogResult {
+  final IVAEstado? estado;
+  final DateTime? periodicDate;
+  final double? periodicAmount;
+  final bool recapYes;
+  final DateTime? recapDate;
+  final double? recapAmount;
+
+  _IVADialogResult({
+    required this.estado,
+    required this.periodicDate,
+    required this.periodicAmount,
+    required this.recapYes,
+    required this.recapDate,
+    required this.recapAmount,
+  });
+}
+
+class _IVADialog extends StatefulWidget {
+  final IVAEstado? initialEstado;
+
+  final DateTime? initialPeriodicDate;
+  final double? initialPeriodicAmount;
+
+  final bool initialRecapYes;
+  final DateTime? initialRecapDate;
+  final double? initialRecapAmount;
+
+  const _IVADialog({
+    required this.initialEstado,
+    required this.initialPeriodicDate,
+    required this.initialPeriodicAmount,
+    required this.initialRecapYes,
+    required this.initialRecapDate,
+    required this.initialRecapAmount,
+  });
+
+  @override
+  State<_IVADialog> createState() => _IVADialogState();
+}
+
+class _IVADialogState extends State<_IVADialog> {
+  IVAEstado? estado;
+
+  DateTime? periodicDate;
+  final periodicAmountCtrl = TextEditingController();
+
+  bool recapYes = false;
+  DateTime? recapDate;
+  final recapAmountCtrl = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    estado = widget.initialEstado;
+
+    periodicDate = widget.initialPeriodicDate;
+    if (widget.initialPeriodicAmount != null) {
+      periodicAmountCtrl.text =
+          widget.initialPeriodicAmount!.toStringAsFixed(0);
+    }
+
+    recapYes = widget.initialRecapYes;
+    recapDate = widget.initialRecapDate;
+    if (widget.initialRecapAmount != null) {
+      recapAmountCtrl.text = widget.initialRecapAmount!.toStringAsFixed(0);
+    }
+  }
+
+  String _fmtDate(DateTime d) =>
+      '${d.day.toString().padLeft(2, '0')}-${d.month.toString().padLeft(2, '0')}-${d.year}';
+
+  double? _parseEuro(String s) =>
+      double.tryParse(s.replaceAll('.', '').replaceAll(',', '.'));
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Configurar Declaração de IVA'),
+      content: SizedBox(
+        width: 760,
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // -------- Periódica --------
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  border: Border.all(
+                      color: Theme.of(context).colorScheme.outlineVariant),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Declaração Periódica de IVA',
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 16)),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<IVAEstado>(
+                      value: estado,
+                      items: IVAEstado.values
+                          .map((e) => DropdownMenuItem(
+                              value: e, child: Text(_labelEstado(e))))
+                          .toList(),
+                      onChanged: (v) => setState(() => estado = v),
+                      decoration: const InputDecoration(
+                          labelText: 'Pagar / reembolso / etc.'),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () async {
+                              final now = DateTime.now();
+                              final d = await showDatePicker(
+                                context: context,
+                                firstDate: DateTime(now.year - 1),
+                                lastDate: DateTime(now.year + 1),
+                                initialDate: periodicDate ?? now,
+                              );
+                              if (d != null) setState(() => periodicDate = d);
+                            },
+                            icon: const Icon(Icons.event),
+                            label: Text(periodicDate == null
+                                ? 'Data (Periódica)'
+                                : _fmtDate(periodicDate!)),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: TextField(
+                            controller: periodicAmountCtrl,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                                labelText: 'Montante Periódica (€)'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              // -------- Recapitulativa --------
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  border: Border.all(
+                      color: Theme.of(context).colorScheme.outlineVariant),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Declaração Recapitulativa de IVA',
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 16)),
+                    const SizedBox(height: 8),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('SIM?'),
+                      value: recapYes,
+                      onChanged: (v) => setState(() => recapYes = v),
+                    ),
+                    if (recapYes) ...[
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: () async {
+                                final now = DateTime.now();
+                                final d = await showDatePicker(
+                                  context: context,
+                                  firstDate: DateTime(now.year - 1),
+                                  lastDate: DateTime(now.year + 1),
+                                  initialDate: recapDate ?? now,
+                                );
+                                if (d != null) setState(() => recapDate = d);
+                              },
+                              icon: const Icon(Icons.event),
+                              label: Text(recapDate == null
+                                  ? 'Data (Recapitulativa)'
+                                  : _fmtDate(recapDate!)),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: TextField(
+                              controller: recapAmountCtrl,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(
+                                  labelText: 'Montante Recapitulativa (€)'),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Se SIM, preencha data e montante; se NÃO, estes campos são ignorados.',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancelar')),
+        FilledButton(
+          onPressed: () {
+            final periodicAmount = _parseEuro(periodicAmountCtrl.text);
+            final recapAmount = _parseEuro(recapAmountCtrl.text);
+
+            Navigator.pop(
+              context,
+              _IVADialogResult(
+                estado: estado,
+                periodicDate: periodicDate,
+                periodicAmount: periodicAmount,
+                recapYes: recapYes,
+                recapDate: recapDate,
+                recapAmount: recapAmount,
+              ),
+            );
           },
+          child: const Text('Guardar'),
         ),
       ],
     );
+  }
+
+  String _labelEstado(IVAEstado e) {
+    switch (e) {
+      case IVAEstado.aPagar:
+        return 'A Pagar';
+      case IVAEstado.planoPagar:
+        return 'Plano (Pagar)';
+      case IVAEstado.recuperar:
+        return 'Recuperar';
+      case IVAEstado.reembolso:
+        return 'Reembolso';
+      case IVAEstado.reportar:
+        return 'Reportar';
+      case IVAEstado.naoTemIVA:
+        return 'Não tem IVA';
+      case IVAEstado.enviado:
+        return 'Enviado';
+      case IVAEstado.cessada:
+        return 'Cessada';
+    }
   }
 }

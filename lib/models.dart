@@ -122,9 +122,21 @@ class TaskInstance {
   bool done;
   String? responsibleId;
   IVAEstado? ivaEstado;
+
+  /// ⚠️ NOVO — valores independentes:
+  DateTime? periodicDate;
+  double? periodicMontante;
+
+  DateTime? recapDate;
+  double? recapMontante;
+
+  /// Mantido para compat: indicador de que houve Recapitulativa
+  bool? recapitulativa;
+
+  /// (LEGADO) estes campos eram usados para 1 só par de data/montante
+  /// Mantidos apenas por compatibilidade eventual.
   DateTime? data;
   double? montante;
-  bool? recapitulativa;
 
   TaskInstance({
     required this.companyId,
@@ -134,10 +146,20 @@ class TaskInstance {
     this.done = false,
     this.responsibleId,
     this.ivaEstado,
+    this.periodicDate,
+    this.periodicMontante,
+    this.recapDate,
+    this.recapMontante,
+    this.recapitulativa,
     this.data,
     this.montante,
-    this.recapitulativa,
   });
+
+  static DateTime? _parseDate(dynamic v) {
+    if (v == null) return null;
+    if (v is DateTime) return v;
+    return DateTime.tryParse(v.toString());
+  }
 
   factory TaskInstance.fromMap(Map<String, dynamic> m) => TaskInstance(
         companyId: m['company_id'] as String,
@@ -149,9 +171,15 @@ class TaskInstance {
         ivaEstado: (m['iva_estado'] as String?) == null
             ? null
             : IVAEstado.values.firstWhere((e) => e.name == m['iva_estado']),
-        data: m['data'] == null ? null : DateTime.parse(m['data']),
-        montante: (m['montante'] as num?)?.toDouble(),
+        // novos campos
+        periodicDate: _parseDate(m['periodic_data']),
+        periodicMontante: (m['periodic_montante'] as num?)?.toDouble(),
+        recapDate: _parseDate(m['recap_data']),
+        recapMontante: (m['recap_montante'] as num?)?.toDouble(),
         recapitulativa: m['recapitulativa'] as bool?,
+        // legado — se existirem ainda na DB
+        data: _parseDate(m['data']),
+        montante: (m['montante'] as num?)?.toDouble(),
       );
 
   Map<String, dynamic> toMap() => {
@@ -162,9 +190,15 @@ class TaskInstance {
         'done': done,
         'responsible_id': responsibleId,
         'iva_estado': ivaEstado?.name,
-        'data': data?.toIso8601String(),
-        'montante': montante,
+        // novos campos
+        'periodic_data': periodicDate?.toIso8601String(),
+        'periodic_montante': periodicMontante,
+        'recap_data': recapDate?.toIso8601String(),
+        'recap_montante': recapMontante,
         'recapitulativa': recapitulativa,
+        // legado (opcional) — espelhar periodic nos antigos para compat
+        'data': data ?? periodicDate?.toIso8601String(),
+        'montante': montante ?? periodicMontante,
       };
 }
 

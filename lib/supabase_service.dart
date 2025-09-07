@@ -25,7 +25,6 @@ class Supa {
 
   static Future<void> signOut() => client.auth.signOut();
 
-  /// Re-adicionado para o teu main.dart
   static void onAuthStateChange(void Function(Session?) cb) {
     client.auth.onAuthStateChange.listen((data) => cb(data.session));
   }
@@ -43,6 +42,13 @@ class Supa {
         .select()
         .single();
     return inserted['id'] as String;
+  }
+
+  static Future<void> updateAccountant(Accountant a) async {
+    await client
+        .from('accountants')
+        .update({'name': a.name, 'cargo': a.cargo.name, 'email': a.email}).eq(
+            'id', a.id);
   }
 
   static Future<Accountant?> fetchMyAccountant() async {

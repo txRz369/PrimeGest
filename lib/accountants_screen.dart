@@ -38,6 +38,27 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
     }
   }
 
+  Future<void> _editAcc(Accountant a) async {
+    final res = await showDialog<_AccResult>(
+      context: context,
+      builder: (_) => _AccDialog(existing: a),
+    );
+    if (res != null) {
+      await Supa.updateAccountant(Accountant(
+        id: a.id,
+        name: res.name,
+        cargo: res.cargo,
+        email: res.email,
+      ));
+      await _load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Contabilista "${res.name}" atualizado.')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -74,6 +95,10 @@ class _AccountantsScreenState extends State<AccountantsScreen> {
                           title: Text(a.name),
                           subtitle: Text(
                               '${a.cargo.name.toUpperCase()} • ${a.email}'),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.edit),
+                            onPressed: () => _editAcc(a),
+                          ),
                         ),
                       );
                     },
@@ -93,7 +118,8 @@ class _AccResult {
 }
 
 class _AccDialog extends StatefulWidget {
-  const _AccDialog();
+  final Accountant? existing;
+  const _AccDialog({this.existing});
 
   @override
   State<_AccDialog> createState() => _AccDialogState();
@@ -105,9 +131,21 @@ class _AccDialogState extends State<_AccDialog> {
   Cargo _cargo = Cargo.junior;
 
   @override
+  void initState() {
+    super.initState();
+    if (widget.existing != null) {
+      final a = widget.existing!;
+      _name.text = a.name;
+      _email.text = a.email;
+      _cargo = a.cargo;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final isEdit = widget.existing != null;
     return AlertDialog(
-      title: const Text('Novo Contabilista'),
+      title: Text(isEdit ? 'Editar Contabilista' : 'Novo Contabilista'),
       content: SizedBox(
         width: 520,
         child: Column(
